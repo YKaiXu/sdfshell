@@ -13,6 +13,54 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 
 ---
 
+## Quick Start
+
+### 1. Configure SDF Credentials
+
+```bash
+# Run this command to set your SDF credentials
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "
+from sdfshell import set_config
+set_config(username='YOUR_USERNAME', password='YOUR_PASSWORD')
+"
+```
+
+### 2. Connect to SDF and Enter COM
+
+```bash
+# Connect to SDF.org
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "
+from sdfshell import ssh_connect, com_login
+ssh_connect(host='sdf.org', username='YOUR_USERNAME', password='YOUR_PASSWORD')
+com_login()
+"
+```
+
+### 3. Send Message to COM
+
+```bash
+# Send message to current COM room
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "
+from sdfshell import com_send
+com_send(message='Hello everyone!')
+"
+```
+
+---
+
+## Message Routing Rules
+
+**When user message starts with prefix, use exec tool to call SDFShell:**
+
+| User Message | exec Command |
+|--------------|--------------|
+| `com: Hello` | `cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import com_send; com_send(message='Hello')"` |
+| `sh: ls -la` | `cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import ssh_exec; ssh_exec(command='ls -la')"` |
+
+**DO NOT execute `com:` or `sh:` as direct bash commands!**
+
+---
+
 ## 🎯 NANOBOT LEARNING PROMPT
 
 **Copy this prompt and send to nanobot to teach it how to use SDFShell:**
@@ -20,34 +68,53 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 ```
 You have a skill called "sdfshell" that lets you interact with SDF.org COM chat room.
 
-## How to Use SDFShell
+## IMPORTANT: How to Call SDFShell Functions
+
+SDFShell functions are NOT registered as tools. You must use the exec tool to call them.
+
+### Pattern:
+```bash
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import FUNCTION; FUNCTION(PARAMS)"
+```
 
 ### Step 1: Configure Credentials
-Before using, you MUST configure SDF credentials. When user says:
-- "Set SDF username to XXX" → Call set_config(username="XXX")
-- "Set SDF password to XXX" → Call set_config(password="XXX")
-- "Configure SDF with username XXX and password YYY" → Call set_config(username="XXX", password="YYY")
+When user says "Set SDF username to XXX" or "Set SDF password to XXX":
+```bash
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import set_config; set_config(username='XXX', password='YYY')"
+```
 
 ### Step 2: Connect to SDF
-When user says "Connect to SDF" or "Login to SDF":
-1. Check if username and password are configured
-2. If not configured, ask user to configure first
-3. If configured, call ssh_connect() to establish SSH connection
+When user says "Connect to SDF":
+```bash
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import ssh_connect, com_login; ssh_connect(); com_login()"
+```
 
-### Step 3: Use COM Chat
-When user message starts with "com:" prefix:
-1. Extract the message after "com:"
-2. Call com_send(message="extracted message")
-3. DO NOT execute as bash command!
+### Step 3: Send COM Message
+When user says "com: Hello everyone!":
+```bash
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import com_send; com_send(message='Hello everyone!')"
+```
 
-Example:
-- User: "com: Hello everyone!"
-- You: Call com_send(message="Hello everyone!")
+### Step 4: Execute SSH Command
+When user says "sh: ls -la":
+```bash
+cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import ssh_exec; ssh_exec(command='ls -la')"
+```
 
-### Step 4: Execute SSH Commands
-When user message starts with "sh:" prefix:
-1. Extract the command after "sh:"
-2. Call ssh_exec(command="extracted command")
+### Available Functions:
+- set_config(username, password) - Configure SDF credentials
+- ssh_connect() - Connect to SDF server
+- com_login() - Login to COM chat room
+- com_send(message) - Send message to COM
+- com_read(count) - Read messages from COM
+- ssh_exec(command) - Execute command on SDF
+- com_logout() - Logout from COM
+- ssh_disconnect() - Disconnect from SDF
+```
+
+---
+
+## Core Technologies
 3. DO NOT execute as bash command!
 
 Example:
