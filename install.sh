@@ -30,16 +30,19 @@ fi
 echo "✓ Python version: $PYTHON_VERSION"
 
 # Set installation directories
-# IMPORTANT: nanobot loads skills from workspace/skills/, NOT from ~/.nanobot/skills/
+# NOTE: nanobot loads skills from both locations:
+# 1. workspace/skills/ (SkillsLoader)
+# 2. ~/.nanobot/skills/ (some commands check here)
+# We install to workspace/skills/ and create symlink
 WORKSPACE_DIR="${HOME}/.nanobot/workspace"
 SKILL_DIR="${WORKSPACE_DIR}/skills/sdfshell"
 VENV_DIR="${SKILL_DIR}/venv"
 LOG_DIR="${HOME}/.nanobot/logs"
-CONFIG_FILE="${HOME}/.nanobot/config.json"
 
 # Create directories
 echo "Creating directories..."
 mkdir -p "${WORKSPACE_DIR}/skills"
+mkdir -p "${HOME}/.nanobot/skills"
 mkdir -p "$LOG_DIR"
 
 # Clone or update repository
@@ -119,6 +122,16 @@ if [ -f "$VENV_DIR/bin/python" ]; then
     echo "✓ Virtual environment"
 else
     echo "✗ Virtual environment not found"
+fi
+
+# Create symlink for nanobot to find the skill
+echo ""
+echo "Creating symlink..."
+ln -sf "$SKILL_DIR" "${HOME}/.nanobot/skills/sdfshell"
+if [ -L "${HOME}/.nanobot/skills/sdfshell" ]; then
+    echo "✓ Symlink created: ~/.nanobot/skills/sdfshell -> $SKILL_DIR"
+else
+    echo "⚠ Symlink creation failed"
 fi
 
 # Update nanobot config
