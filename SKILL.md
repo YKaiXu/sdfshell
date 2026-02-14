@@ -363,23 +363,205 @@ When user uses "sh:" prefix, nanobot needs to translate natural language to corr
 
 ### Common Unix Commands
 
+**File and Directory Commands:**
+
 | User May Say | Correct Command | Description |
 |--------------|-----------------|-------------|
-| List files | `ls` or `ls -la` | List directory contents |
+| List files | `ls` | List directory contents |
+| List all files (hidden too) | `ls -la` | List all files with details |
 | View current directory | `pwd` | Print working directory |
-| Change directory | `cd dirname` | Change directory |
+| Change directory | `cd dirname` | Change to directory |
+| Go to home directory | `cd ~` or `cd` | Go to home |
+| Go up one directory | `cd ..` | Parent directory |
+| Create directory | `mkdir dirname` | Create new directory |
+| Create nested directories | `mkdir -p path/to/dir` | Create parent dirs as needed |
+| Remove empty directory | `rmdir dirname` | Remove empty directory |
+| Remove directory with contents | `rm -rf dirname` | Remove directory recursively |
+| Create empty file | `touch filename` | Create empty file |
 | View file content | `cat filename` | Display file content |
-| View file (paged) | `more filename` or `less filename` | Paged view |
-| Edit file | `pico filename` or `vi filename` | Edit file |
-| Create directory | `mkdir dirname` | Create directory |
-| Delete file | `rm filename` | Remove file |
-| Delete directory | `rmdir dirname` | Remove empty directory |
+| View file with line numbers | `cat -n filename` | Display with line numbers |
+| View file (paged) | `less filename` | Paged view, use q to quit |
+| View first 10 lines | `head filename` | First 10 lines |
+| View first N lines | `head -n 20 filename` | First 20 lines |
+| View last 10 lines | `tail filename` | Last 10 lines |
+| View last N lines | `tail -n 20 filename` | Last 20 lines |
+| Follow file updates | `tail -f filename` | Follow file updates live |
 | Copy file | `cp source dest` | Copy file |
-| Move/rename | `mv source dest` | Move or rename |
-| Find file | `find . -name "filename"` | Find file |
-| View processes | `ps` or `ps aux` | Show processes |
-| View disk space | `df -h` | Disk space |
+| Copy directory | `cp -r source dest` | Copy directory recursively |
+| Move/rename file | `mv source dest` | Move or rename |
+| Delete file | `rm filename` | Remove file |
+| Delete multiple files | `rm file1 file2` | Remove multiple files |
+| Find file by name | `find . -name "filename"` | Find file in current dir |
+| Find file by type | `find . -type f -name "*.txt"` | Find all .txt files |
+| Search in file | `grep "pattern" filename` | Search for pattern |
+| Search case-insensitive | `grep -i "pattern" filename` | Case-insensitive search |
+| Search in all files | `grep -r "pattern" .` | Recursive search |
+| Compare two files | `diff file1 file2` | Show differences |
+| Archive files | `tar -cvf archive.tar files` | Create tar archive |
+| Extract archive | `tar -xvf archive.tar` | Extract tar archive |
+| Compress with gzip | `gzip filename` | Compress file |
+| Decompress gzip | `gunzip filename.gz` | Decompress file |
+| Create zip | `zip archive.zip files` | Create zip archive |
+| Extract zip | `unzip archive.zip` | Extract zip archive |
+
+**File Permissions and Ownership:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| Change permissions | `chmod 755 filename` | Set rwx for owner, rx for others |
+| Change permissions recursive | `chmod -R 755 dirname` | Recursive permission change |
+| Make executable | `chmod +x filename` | Add execute permission |
+| Change owner | `chown user filename` | Change file owner |
+| Change owner and group | `chown user:group filename` | Change owner and group |
+| View permissions | `ls -la filename` | Show file permissions |
+
+**Process Management:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| View running processes | `ps` | Show processes |
+| View all processes | `ps aux` | Show all processes |
+| View processes live | `top` | Interactive process viewer |
+| View processes (better) | `htop` | Enhanced process viewer |
+| Kill process by PID | `kill PID` | Terminate process |
+| Force kill process | `kill -9 PID` | Force terminate |
+| Kill by name | `killall name` | Kill all processes by name |
+| Run in background | `command &` | Run command in background |
+| View background jobs | `jobs` | List background jobs |
+| Bring to foreground | `fg %1` | Bring job 1 to foreground |
+| Send to background | `bg %1` | Send job 1 to background |
+
+**Disk and System Information:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| View disk space | `df -h` | Disk space human-readable |
+| View directory size | `du -sh dirname` | Directory size |
+| View file size | `du -h filename` | File size |
+| View memory usage | `free -h` | Memory usage |
+| View system info | `uname -a` | System information |
+| View hostname | `hostname` | Show hostname |
+| View uptime | `uptime` | System uptime |
 | View who's online | `who` or `w` | Online users |
+| View current user | `whoami` | Current username |
+| View user groups | `groups` | User's groups |
+| View user ID | `id` | User and group IDs |
+
+**Network Commands:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| Test connectivity | `ping hostname` | Ping a host |
+| View network interfaces | `ifconfig` or `ip a` | Network interfaces |
+| View ports | `netstat -tuln` | Listening ports |
+| View connections | `ss -tuln` | Socket statistics |
+| Download file | `wget URL` | Download from URL |
+| Download with curl | `curl -O URL` | Download with curl |
+| Trace network route | `traceroute hostname` | Trace route to host |
+| DNS lookup | `nslookup hostname` | DNS query |
+| View routing table | `route -n` | Routing table |
+
+**Text Processing:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| Print text | `echo "text"` | Print text |
+| Append to file | `echo "text" >> file` | Append text to file |
+| Overwrite file | `echo "text" > file` | Overwrite file |
+| Sort file contents | `sort filename` | Sort lines |
+| Sort reverse | `sort -r filename` | Sort in reverse |
+| Count lines | `wc -l filename` | Count lines |
+| Count words | `wc -w filename` | Count words |
+| Count characters | `wc -c filename` | Count characters |
+| Remove duplicates | `sort filename \| uniq` | Unique lines |
+| Cut columns | `cut -d',' -f1 filename` | Cut first column by delimiter |
+| Search and replace | `sed 's/old/new/g' filename` | Replace all occurrences |
+| Print specific lines | `sed -n '5,10p' filename` | Print lines 5-10 |
+
+**User Management:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| Add user | `useradd username` | Create new user |
+| Modify user | `usermod options username` | Modify user |
+| Delete user | `userdel username` | Delete user |
+| Change password | `passwd` | Change own password |
+| Change user password | `passwd username` | Change user's password |
+| Switch user | `su username` | Switch to user |
+| Run as root | `sudo command` | Run with elevated privileges |
+| Switch to root | `sudo su` or `su -` | Become root |
+
+**System Control:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| Start service | `systemctl start service` | Start service |
+| Stop service | `systemctl stop service` | Stop service |
+| Restart service | `systemctl restart service` | Restart service |
+| Service status | `systemctl status service` | Check service status |
+| Enable service | `systemctl enable service` | Enable at boot |
+| Disable service | `systemctl disable service` | Disable at boot |
+| View logs | `journalctl -u service` | View service logs |
+| Shutdown system | `shutdown now` | Shutdown immediately |
+| Reboot system | `reboot` | Restart system |
+
+**Environment and Variables:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| View environment | `env` or `printenv` | Show environment variables |
+| Set variable | `export VAR=value` | Set environment variable |
+| View PATH | `echo $PATH` | Show PATH variable |
+| View home directory | `echo $HOME` | Show home directory |
+| Create alias | `alias name='command'` | Create command alias |
+| View aliases | `alias` | List all aliases |
+| Find command location | `which command` | Show command path |
+| Find binary/source/man | `whereis command` | Show all locations |
+| Command description | `whatis command` | Brief command description |
+| View manual | `man command` | Command manual page |
+
+**File Editors:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| Edit with nano | `nano filename` | Simple editor |
+| Edit with vim | `vi filename` or `vim filename` | Advanced editor |
+| Edit with emacs | `emacs filename` | Emacs editor |
+
+**SSH and Remote:**
+
+| User May Say | Correct Command | Description |
+|--------------|-----------------|-------------|
+| Connect to server | `ssh user@host` | SSH connection |
+| Connect with port | `ssh -p port user@host` | SSH with specific port |
+| Copy file to remote | `scp file user@host:/path` | Secure copy |
+| Copy from remote | `scp user@host:/path/file .` | Copy from remote |
+| Sync directory | `rsync -avz source/ dest/` | Sync directories |
+
+**Natural Language Translation Examples:**
+
+| User Says | Translate To |
+|-----------|--------------|
+| "Show me all files" | `ls -la` |
+| "What directory am I in?" | `pwd` |
+| "Go to home" | `cd ~` |
+| "Create a folder called test" | `mkdir test` |
+| "Delete the test folder" | `rm -rf test` |
+| "Make a new file called notes.txt" | `touch notes.txt` |
+| "Show what's in notes.txt" | `cat notes.txt` |
+| "Copy file.txt to backup/" | `cp file.txt backup/` |
+| "Move old.txt to new.txt" | `mv old.txt new.txt` |
+| "Find all Python files" | `find . -name "*.py"` |
+| "Search for 'error' in log.txt" | `grep "error" log.txt` |
+| "How much disk space is left?" | `df -h` |
+| "What's using the most space?" | `du -sh * \| sort -rh \| head` |
+| "Show running processes" | `ps aux` |
+| "Kill process 1234" | `kill 1234` |
+| "What's my IP address?" | `ip a` or `ifconfig` |
+| "Download this URL" | `wget URL` |
+| "Count lines in file" | `wc -l filename` |
+| "Show last 50 lines of log" | `tail -n 50 filename` |
+| "Follow the log file" | `tail -f filename` |
 
 ---
 
