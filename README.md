@@ -100,11 +100,63 @@ Filesystem     Size  Used Avail Use%
 
 ## Requirements
 
+### System Requirements
+
 - Python 3.10+
+- Git
+- pip (Python package manager)
+- SDF.org account
+
+### Install System Dependencies
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install -y python3.10 python3-pip python3-venv git
+```
+
+**CentOS/RHEL/Fedora:**
+```bash
+# CentOS/RHEL
+sudo yum install -y python3 python3-pip python3-venv git
+
+# Fedora
+sudo dnf install -y python3 python3-pip python3-venv git
+```
+
+**macOS:**
+```bash
+# Using Homebrew
+brew install python@3.10 git
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S python python-pip python-virtualenv git
+```
+
+### Python Dependencies
+
+These are installed automatically by the install script:
 - paramiko >= 3.0.0
 - paramiko-expect >= 0.3.5
 - pyte >= 0.8.0
-- SDF.org account
+
+### Verify Installation
+
+```bash
+# Check Python version (must be 3.10+)
+python3 --version
+
+# Check pip
+pip3 --version
+
+# Check git
+git --version
+
+# Check venv module
+python3 -m venv --help
+```
 
 ## Author
 
