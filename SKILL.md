@@ -65,7 +65,7 @@ Feishu Message → Detect Prefix →
 Send this command to nanobot:
 
 ```
-请在bash执行: curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | bash
+Execute in bash: curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | bash
 ```
 
 Or manually install:
@@ -91,6 +91,82 @@ After installation, nanobot automatically knows:
 - ✅ All SDF shell commands
 - ✅ Common Unix commands
 - ✅ Bidirectional auto-translation
+
+### Post-Installation Welcome Message
+
+**IMPORTANT: After installation, nanobot MUST proactively send this welcome message to the user:**
+
+```
+🎉 SDFShell installed successfully!
+
+I can now help you interact with SDF.org COM chat room. Here's how to use:
+
+📝 Message Prefixes:
+• com: Hello → Send "Hello" to COM chat room (auto-translate to English)
+• sh: disk → Execute "disk" command on SDF server
+• No prefix → Normal conversation with me
+
+⚙️ Configuration Required:
+Before using, please configure your SDF credentials:
+• Say "Set SDF host to sdf.org"
+• Say "Set SDF username to YOUR_USERNAME"
+• Say "Set SDF password to YOUR_PASSWORD"
+Or say "Configure SDF with username YOUR_NAME and password YOUR_PASS"
+
+🚀 Quick Start:
+1. Configure your credentials (see above)
+2. Say "Connect to SDF" or "Connect to server"
+3. Say "Enter chat room" to join COM
+4. Say "com: Hello everyone!" to send a message
+
+💡 Tips:
+• Use "sh: help" to see all SDF commands
+• Use "com: l" to list chat rooms
+• Use "com: g spacebar" to join the active room
+
+Ask me anything about SDF.org!
+```
+
+### Configuration via Conversation
+
+**nanobot can configure SDF through natural conversation:**
+
+| User Says | nanobot Action |
+|-----------|----------------|
+| "Set SDF host to sdf.org" | Call `set_config(host="sdf.org")` |
+| "Set SDF username to myname" | Call `set_config(username="myname")` |
+| "Set SDF password to mypass" | Call `set_config(password="mypass")` |
+| "Configure SDF with username X and password Y" | Call `set_config(username="X", password="Y")` |
+| "What's my SDF config?" | Call `get_config_status()` |
+| "Connect to SDF" | Check config, then call `ssh_connect()` |
+
+**Configuration is saved to:** `~/.nanobot/skills/sdfshell/config.json`
+
+### Message Processing Logic
+
+**When COM messages arrive, nanobot should:**
+
+1. **Translate**: Detect source language, translate to user's chat tool language
+2. **Summarize**: If multiple messages, provide a brief summary
+3. **Remind**: Add helpful context when appropriate
+
+**Example Output Format:**
+
+```
+📨 [COM Message] from spacebar room:
+
+user1: Hey, anyone know how to use IRC here?
+user2: Yes, type 'help irc' in the shell
+
+---
+💡 Summary: Users discussing IRC usage on SDF
+🔄 Translated from English to Chinese
+```
+
+**When to add reminders:**
+- New user joins the room → Remind about room rules
+- Technical question asked → Suggest relevant SDF commands
+- User seems confused → Offer help with specific commands
 
 ## Configuration
 
