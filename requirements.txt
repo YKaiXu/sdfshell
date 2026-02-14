@@ -1,0 +1,4 @@
+# SDFCOM Dependencies
+paramiko>=3.0.0
+paramiko-expect>=0.3.5
+pyte>=0.8.0
