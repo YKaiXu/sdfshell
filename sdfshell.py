@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import json
 import logging
 import os
 import re
@@ -819,15 +820,41 @@ class SDFShellChannel(BaseChannel):
         log.info("SDFShell channel stopped")
     
     def _on_com_message(self, messages: list[str]) -> None:
-        """处理COM消息回调"""
+        """处理COM消息回调
+        
+        Process COM message callback with enhanced formatting
+        增强格式化的COM消息回调处理
+        """
+        if not messages:
+            return
+        
+        # Format messages for nanobot to process
+        # 格式化消息供nanobot处理
+        formatted_messages = []
         for msg in messages:
-            asyncio.create_task(self._queue.publish(self._channel_name, {
-                "type": "message",
-                "channel": self._channel_name,
-                "content": msg,
-                "timestamp": time.time()
-            }))
-            log.debug(f"COM message queued: {msg[:50]}...")
+            formatted_messages.append({
+                "raw": msg,
+                "timestamp": time.time(),
+                "source": "com_chat",
+                "needs_translation": True,  # Flag for nanobot to translate
+                "needs_summary": len(messages) > 3  # Flag for summary if many messages
+            })
+        
+        # Publish to queue with metadata
+        # 发布到队列并附带元数据
+        asyncio.create_task(self._queue.publish(self._channel_name, {
+            "type": "com_messages",
+            "channel": self._channel_name,
+            "messages": formatted_messages,
+            "count": len(messages),
+            "timestamp": time.time(),
+            "instruction": (
+                "Please: 1) Translate to user's language, "
+                "2) Summarize if multiple messages, "
+                "3) Add helpful context/reminders when appropriate"
+            )
+        }))
+        log.debug(f"COM messages queued: {len(messages)} messages")
     
     async def receive(self) -> AsyncGenerator[dict, None]:
         """接收消息（nanobot调用）"""
@@ -1086,6 +1113,187 @@ def process_message(text: str) -> str:
         return f"Error: {e}"
 
 
+# ============== 安装后欢迎消息 ==============
+
+def get_welcome_message() -> str:
+    """获取安装后欢迎消息
+    
+    Get post-installation welcome message for user guidance
+    获取安装后欢迎消息用于用户指导
+    """
+    return """🎉 SDFShell installed successfully!
+
+I can now help you interact with SDF.org COM chat room. Here's how to use:
+
+📝 Message Prefixes:
+• com: Hello → Send "Hello" to COM chat room (auto-translate to English)
+• sh: disk → Execute "disk" command on SDF server
+• No prefix → Normal conversation with me
+
+⚙️ Configuration Required:
+Before using, please configure your SDF credentials:
+• Say "Set SDF host to sdf.org"
+• Say "Set SDF username to YOUR_USERNAME"
+• Say "Set SDF password to YOUR_PASSWORD"
+Or say "Configure SDF with username YOUR_NAME and password YOUR_PASS"
+
+🚀 Quick Start:
+1. Configure your credentials (see above)
+2. Say "Connect to SDF" or "Connect to server"
+3. Say "Enter chat room" to join COM
+4. Say "com: Hello everyone!" to send a message
+
+💡 Tips:
+• Use "sh: help" to see all SDF commands
+• Use "com: l" to list chat rooms
+• Use "com: g spacebar" to join the active room
+
+Ask me anything about SDF.org!"""
+
+
+# ============== 配置管理 ==============
+
+CONFIG_FILE = os.path.expanduser("~/.nanobot/skills/sdfshell/config.json")
+
+def load_config() -> dict:
+    """加载配置
+    
+    Load configuration from file
+    从文件加载配置
+    """
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        log.warning(f"Failed to load config: {e}")
+    return {}
+
+def save_config(config: dict) -> bool:
+    """保存配置
+    
+    Save configuration to file
+    保存配置到文件
+    """
+    try:
+        config_dir = os.path.dirname(CONFIG_FILE)
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir, exist_ok=True)
+        
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        
+        log.info(f"Config saved to {CONFIG_FILE}")
+        return True
+    except Exception as e:
+        log.error(f"Failed to save config: {e}")
+        return False
+
+def set_config(host: str = None, username: str = None, password: str = None, port: int = 22) -> str:
+    """设置配置 (对话配置入口)
+    
+    Set configuration via conversation
+    通过对话设置配置
+    
+    Args:
+        host: SSH host address / SSH主机地址
+        username: SSH username / SSH用户名
+        password: SSH password / SSH密码
+        port: SSH port / SSH端口
+    
+    Returns:
+        Configuration result message
+        配置结果消息
+    """
+    config = load_config()
+    
+    if host:
+        config["host"] = host
+    if username:
+        config["username"] = username
+    if password:
+        config["password"] = password
+    if port:
+        config["port"] = port
+    
+    if save_config(config):
+        masked_password = "****" if config.get("password") else "not set"
+        return f"""✅ Configuration saved:
+• Host: {config.get('host', 'not set')}
+• Port: {config.get('port', 22)}
+• Username: {config.get('username', 'not set')}
+• Password: {masked_password}
+
+Ready to connect! Say "Connect to SDF" to start."""
+    else:
+        return "❌ Failed to save configuration. Please check permissions."
+
+def get_config_status() -> str:
+    """获取配置状态
+    
+    Get current configuration status
+    获取当前配置状态
+    """
+    config = load_config()
+    
+    if not config:
+        return """⚠️ SDFShell is not configured yet!
+
+Please configure your credentials:
+• Say "Set SDF host to sdf.org"
+• Say "Set SDF username to YOUR_USERNAME"
+• Say "Set SDF password to YOUR_PASSWORD"
+Or: "Configure SDF with username YOUR_NAME and password YOUR_PASS" """
+    
+    masked_password = "****" if config.get("password") else "not set"
+    return f"""📋 Current Configuration:
+• Host: {config.get('host', 'not set')}
+• Port: {config.get('port', 22)}
+• Username: {config.get('username', 'not set')}
+• Password: {masked_password}
+
+{'✅ Ready to connect!' if config.get('host') and config.get('username') and config.get('password') else '⚠️ Please complete configuration.'} """
+
+
+def format_com_messages(messages: list[dict], user_language: str = "auto") -> str:
+    """格式化COM消息供用户阅读
+    
+    Format COM messages for user reading with translation hints
+    格式化COM消息供用户阅读并附带翻译提示
+    
+    Args:
+        messages: List of message dicts from COM
+        user_language: Target language for translation (auto-detect if "auto")
+    
+    Returns:
+        Formatted message string for display
+    """
+    if not messages:
+        return "No messages"
+    
+    lines = ["📨 [COM Message]:", ""]
+    
+    for msg in messages:
+        raw = msg.get("raw", "")
+        lines.append(f"  {raw}")
+    
+    # Add instruction for nanobot
+    if len(messages) > 3:
+        lines.extend([
+            "",
+            "---",
+            f"💡 Summary needed: {len(messages)} messages",
+            f"🔄 Please translate to {user_language if user_language != 'auto' else 'user language'}"
+        ])
+    else:
+        lines.extend([
+            "",
+            f"🔄 Please translate to {user_language if user_language != 'auto' else 'user language'}"
+        ])
+    
+    return "\n".join(lines)
+
+
 # ============== TOOLS定义 ==============
 
 TOOLS = [
@@ -1152,11 +1360,46 @@ TOOLS = [
             "properties": {"text": {"type": "string", "description": "用户输入 / User input"}},
             "required": ["text"]
         }
+    },
+    {
+        "name": "get_welcome_message",
+        "description": "获取安装后欢迎消息 / Get post-installation welcome message",
+        "parameters": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "format_com_messages",
+        "description": "格式化COM消息供用户阅读 / Format COM messages for user reading",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "messages": {"type": "array", "description": "消息列表 / Message list"},
+                "user_language": {"type": "string", "description": "目标语言 / Target language", "default": "auto"}
+            },
+            "required": ["messages"]
+        }
+    },
+    {
+        "name": "set_config",
+        "description": "设置SDF配置 (对话配置) / Set SDF configuration via conversation",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "host": {"type": "string", "description": "主机地址 / Host address"},
+                "username": {"type": "string", "description": "用户名 / Username"},
+                "password": {"type": "string", "description": "密码 / Password"},
+                "port": {"type": "integer", "description": "端口 / Port", "default": 22}
+            }
+        }
+    },
+    {
+        "name": "get_config_status",
+        "description": "获取配置状态 / Get current configuration status",
+        "parameters": {"type": "object", "properties": {}}
     }
 ]
 
 
-__version__ = "2.1.0"
+__version__ = "2.3.0"
 __all__ = [
     "SDFShellChannel",
     "SSHSession",
@@ -1177,6 +1420,12 @@ __all__ = [
     "ssh_disconnect",
     "ssh_exec",
     "process_message",
+    "get_welcome_message",
+    "format_com_messages",
+    "set_config",
+    "get_config_status",
+    "load_config",
+    "save_config",
     "TOOLS",
     "DEFAULT_LOG_FILE",
 ]
@@ -1189,3 +1438,6 @@ if __name__ == "__main__":
     print(f"pyte: {HAS_PYTE}")
     print(f"redis: {HAS_REDIS}")
     print(f"nanobot: {HAS_NANOBOT}")
+    print()
+    print("=== Welcome Message ===")
+    print(get_welcome_message())
