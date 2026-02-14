@@ -35,37 +35,10 @@ COM聊天室 → pyte解析 → Queue → Agent(LLM翻译) → 飞书
   - 无前缀 → 正常对话
 ```
 
-### nanobot处理逻辑
-
-```python
-# nanobot Agent处理逻辑
-def route_message(message: str) -> str:
-    """消息路由"""
-    
-    # 检测com:前缀 - 发送到COM聊天室
-    if message.startswith("com:"):
-        content = message[4:].strip()
-        # 调用LLM翻译为英文
-        translated = llm_translate(content, target="en")
-        # 发送到COM
-        return com_send(translated)
-    
-    # 检测sh:前缀 - 执行SSH命令
-    elif message.startswith("sh:"):
-        command = message[3:].strip()
-        return ssh_exec(command)
-    
-    # 无前缀 - 正常对话
-    else:
-        return "正常对话模式"
-```
-
 ## 安装
 
 ```bash
 pip install sdfshell
-# 或
-pip install paramiko-expect pyte
 ```
 
 ## 配置
@@ -81,73 +54,57 @@ channels:
     username: your_username
     password: your_password
     monitor_interval: 3.0
-    queue_type: nanobot  # memory / redis / nanobot
+    queue_type: nanobot
     reconnect_attempts: 3
 ```
 
-## 工具列表
+## COM聊天室完整命令参考
 
-| 工具 | 描述 | 参数 |
+**重要：COM有两种模式 - 命令模式和输入模式**
+
+### 模式切换
+
+| 操作 | 说明 |
+|------|------|
+| 默认进入命令模式 | 启动COM后默认为命令模式 |
+| 输入空格 | 进入输入模式（发送消息） |
+| 发送消息后 | 自动返回命令模式 |
+
+### 命令模式命令
+
+#### 房间管理
+
+| 命令 | 功能 | 示例 |
 |------|------|------|
-| `ssh_connect` | 连接SSH服务器 | host, username, password, port |
-| `com_login` | 登录COM聊天室 | 无 |
-| `com_send` | 发送消息 | message |
-| `com_read` | 读取消息 | count |
-| `com_logout` | 退出COM | 无 |
-| `ssh_disconnect` | 断开SSH | 无 |
-| `ssh_exec` | 执行SSH命令 | command |
+| `l` | 列出所有房间 | 显示房间名、人数、主题 |
+| `g` | 进入房间（goto） | `g spacebar` |
+| `w` | 查看当前房间用户 | 显示用户列表 |
+| `q` | 退出COM | 显示"Unlinking TTY..." |
 
-## SDF.org COM命令参考
-
-nanobot需要知悉以下COM命令，以便正确操作：
-
-### 进入/退出命令
+#### 消息历史
 
 | 命令 | 功能 | 说明 |
 |------|------|------|
-| `com` | 进入COM聊天室 | 在SSH终端输入 |
-| `/q` | 退出COM | 返回Shell |
-| `/quit` | 退出COM | 同/q |
+| `r` | 查看最近18行历史 | 快速回顾 |
+| `R` | 查看指定行数历史 | 输入行数后回车 |
 
-### 频道命令
+### 输入模式
 
-| 命令 | 功能 | 示例 |
-|------|------|------|
-| `/j channel` | 加入/切换频道 | `/j general` |
-| `/join channel` | 加入/切换频道 | `/join help` |
-| `/l` | 离开当前频道 | 返回默认频道 |
-| `/leave` | 离开当前频道 | 同/l |
-| `/channels` | 列出所有频道 | 显示可用频道 |
-| `/chans` | 列出所有频道 | 同/channels |
+| 操作 | 说明 |
+|------|------|
+| 输入空格 | 进入输入模式，显示用户名提示符 |
+| 输入消息 + 回车 | 发送消息到当前房间 |
+| 消息格式 | `[username] 你的消息` |
 
-### 用户管理命令
+### 默认房间
 
-| 命令 | 功能 | 示例 |
-|------|------|------|
-| `/w` | 查看在线用户 | 显示所有在线用户 |
-| `/who` | 查看在线用户 | 同/w |
-| `/i username` | 忽略用户 | `/i spammer` |
-| `/ignore username` | 忽略用户 | 同/i |
-| `/u username` | 取消忽略 | `/u spammer` |
-| `/unignore username` | 取消忽略 | 同/u |
+| 房间 | 说明 |
+|------|------|
+| `lobby` | 默认进入的欢迎房间 |
+| `spacebar` | 活跃的聊天房间 |
+| `anonradio` | 电台相关房间 |
 
-### 消息命令
-
-| 命令 | 功能 | 示例 |
-|------|------|------|
-| `/m username` | 私聊用户 | `/m john Hello` |
-| `/r` | 回复最后私聊 | `/r Hello back` |
-| `/me action` | 发送动作 | `/me waves` |
-
-### 信息命令
-
-| 命令 | 功能 | 说明 |
-|------|------|------|
-| `/h` | 帮助 | 显示帮助信息 |
-| `/t` | 时间 | 显示服务器时间 |
-| `直接输入文字` | 发送消息 | 发送到公共聊天室 |
-
-### nanobot操作指南
+## nanobot操作指南
 
 当用户请求以下操作时，nanobot应调用对应工具：
 
@@ -155,44 +112,67 @@ nanobot需要知悉以下COM命令，以便正确操作：
 |----------|----------|------|
 | 连接到SDF | `ssh_connect` | `ssh_connect("sdf.org", "user", "pass")` |
 | 进入聊天室 | `com_login` | `com_login()` |
-| 发送消息 | `com_send` | `com_send("Hello")` |
+| 发送消息 | `com_send` | `com_send(" Hello")`（空格开头进入输入模式） |
 | 读取消息 | `com_read` | `com_read(10)` |
-| 查看用户 | `com_send` | `com_send("/w")` |
-| 切换频道 | `com_send` | `com_send("/j general")` |
-| 列出频道 | `com_send` | `com_send("/channels")` |
-| 私聊用户 | `com_send` | `com_send("/m john Hello")` |
-| 忽略用户 | `com_send` | `com_send("/i spammer")` |
+| 查看用户 | `com_send` | `com_send("w")` |
+| 列出房间 | `com_send` | `com_send("l")` |
+| 进入房间 | `com_send` | `com_send("g spacebar")` |
+| 查看历史 | `com_send` | `com_send("r")` |
 | 退出聊天 | `com_logout` | `com_logout()` |
 | 断开连接 | `ssh_disconnect` | `ssh_disconnect()` |
+
+## 工具列表
+
+| 工具 | 描述 | 参数 |
+|------|------|------|
+| `ssh_connect` | 连接SSH服务器 | host, username, password, port |
+| `com_login` | 登录COM聊天室 | 无 |
+| `com_send` | 发送命令/消息 | message |
+| `com_read` | 读取消息 | count |
+| `com_logout` | 退出COM | 无 |
+| `ssh_disconnect` | 断开SSH | 无 |
 
 ## 使用示例
 
 ```
+用户: 连接到sdf.org，用户名user，密码pass
+助手: [调用 ssh_connect(host="sdf.org", username="user", password="pass")]
+已连接到sdf.org
+
+用户: 进入聊天室
+助手: [调用 com_login()]
+已登录COM聊天室，当前在lobby房间
+
+用户: 列出房间
+助手: [调用 com_send("l")]
+房间列表:
+- spacebar (16人): there is life out there
+- lobby (1人): SDF's Welcoming Room
+
+用户: 进入spacebar房间
+助手: [调用 com_send("g spacebar")]
+已进入spacebar房间
+
 用户: com: 大家好
 助手: [检测到com:前缀，翻译为英文并发送]
 已发送: Hello everyone!
 
-用户: sh: whoami
-助手: [检测到sh:前缀，执行SSH命令]
-yupeng
+用户: 查看用户
+助手: [调用 com_send("w")]
+当前房间用户:
+- user1@iceland
+- user2@sverige
 
-用户: 你好
-助手: [无前缀，正常对话]
-你好！有什么可以帮助你的？
-
-用户: 连接到sdf.org
-助手: [调用 ssh_connect(host="sdf.org", username="user", password="pass")]
-已连接到sdf.org
-
-用户: 登录COM
-助手: [调用 com_login()]
-已登录COM聊天室
+用户: 退出
+助手: [调用 com_logout() 和 ssh_disconnect()]
+已退出
 ```
 
 ## 注意事项
 
 1. 需要Python 3.10+
 2. 需要SDF.org账号
-3. 消息会自动过滤ANSI控制字符
-4. 系统消息会被过滤，只显示用户聊天内容
-5. `com:`前缀的消息会自动翻译为英文后发送
+3. COM命令模式下无提示符，只有光标
+4. 发送消息需先输入空格进入输入模式
+5. 消息会自动过滤ANSI控制字符
+6. 默认使用nanobot消息队列，无需额外部署
