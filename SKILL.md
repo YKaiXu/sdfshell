@@ -185,6 +185,53 @@ channels:
     reconnect_attempts: 3
 ```
 
+## Running Methods
+
+SDFShell supports two running modes:
+
+### 1. As nanobot Channel (Recommended)
+
+SDFShell runs as a nanobot channel, integrated with nanobot's message processing:
+
+```yaml
+# Add to ~/.nanobot/config.yaml
+channels:
+  sdfshell:
+    enabled: true
+    host: sdf.org
+    username: your_username
+    password: your_password
+```
+
+Then start nanobot normally - SDFShell will auto-start.
+
+### 2. As systemd Service (Standalone)
+
+For standalone monitoring without nanobot:
+
+```bash
+# Install service
+mkdir -p ~/.config/systemd/user
+cp ~/.nanobot/skills/sdfshell/sdfshell.service ~/.config/systemd/user/
+
+# Enable and start
+systemctl --user enable sdfshell
+systemctl --user start sdfshell
+
+# Check status
+systemctl --user status sdfshell
+
+# View logs
+journalctl --user -u sdfshell -f
+```
+
+### Log Files
+
+| Location | Description |
+|----------|-------------|
+| `~/.nanobot/logs/sdfshell.log` | Main log file |
+| `journalctl --user -u sdfshell` | systemd journal logs |
+
 ## COM Chat Room Complete Command Reference
 
 **Important: COM has two modes - Command Mode and Input Mode**
