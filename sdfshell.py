@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """SDFShell - SDF.org COM Chat Channel for nanobot
+SDFShell - SDF.org COM聊天室 nanobot 通道
 
-架构设计：
-- paramiko-expect: 交互式SSH会话
-- pyte: 终端模拟器，解析ncurses输出
-- asyncio: 统一的异步事件循环
-- 消息队列: 支持nanobot Queue / Redis / 内存队列
+Architecture Design / 架构设计：
+- paramiko-expect: Interactive SSH session / 交互式SSH会话
+- pyte: Terminal emulator, parse ncurses output / 终端模拟器，解析ncurses输出
+- asyncio: Unified async event loop / 统一的异步事件循环
+- Message Queue: Support nanobot Queue / Redis / Memory / 消息队列: 支持nanobot Queue / Redis / 内存队列
 
-消息流向：
-- COM消息 → pyte解析 → Queue → Agent → 飞书
-- 飞书消息 → Queue → Agent翻译 → SSH发送 → COM
+Message Flow / 消息流向：
+- COM Message → pyte Parse → Queue → Agent → Feishu / COM消息 → pyte解析 → Queue → Agent → 飞书
+- Feishu Message → Queue → Agent Translate → SSH Send → COM / 飞书消息 → Queue → Agent翻译 → SSH发送 → COM
 """
 
 from __future__ import annotations
@@ -32,11 +33,11 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Coroutine
 
-# Python版本检查
+# Python version check / Python版本检查
 if sys.version_info < (3, 10):
-    raise RuntimeError("SDFShell requires Python 3.10+")
+    raise RuntimeError("SDFShell requires Python 3.10+ / SDFShell需要Python 3.10+")
 
-# 依赖检查
+# Dependency check / 依赖检查
 try:
     import paramiko
     from paramiko_expect import SSHClientInteraction
@@ -56,7 +57,7 @@ try:
 except ImportError:
     HAS_REDIS = False
 
-# nanobot导入
+# nanobot import / nanobot导入
 try:
     from nanobot.channels.base import BaseChannel
     from nanobot.bus.queue import Queue as NanobotQueue
@@ -67,13 +68,15 @@ except ImportError:
     NanobotQueue = None
     Event = None
     class BaseChannel:
+        """Fallback base class / 回退基类"""
         def __init__(self, config: dict): self.config = config
         async def start(self): pass
         async def stop(self): pass
         async def send(self, message: dict): pass
 
-# 日志配置
+# Logging configuration / 日志配置
 def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> logging.Logger:
+    """Setup logging system / 配置日志系统"""
     logger = logging.getLogger("sdfshell")
     logger.setLevel(level)
     if not logger.handlers:
@@ -94,10 +97,10 @@ def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> log
 log = setup_logging()
 
 
-# ============== 异常体系 ==============
+# ============== Exception System / 异常体系 ==============
 
 class SDFShellError(Exception):
-    """SDFShell基础异常"""
+    """SDFShell base exception / SDFShell基础异常"""
     pass
 
 class SSHError(SDFShellError):
