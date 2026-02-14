@@ -8,7 +8,38 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 |-----------|------------|----------|
 | SSH Connection | paramiko-expect | Interactive SSH session, auto password input |
 | Terminal Parsing | pyte | Parse ncurses output, extract chat messages |
-| Message Queue | nanobot.bus.Queue | Reliable message passing mechanism |
+| Message Queue | nanobot.bus.Queue | Message passing between SDFShell and nanobot |
+
+## Architecture
+
+### How SDFShell Connects to nanobot
+
+**IMPORTANT**: SDFShell does NOT connect to nanobot via API. Instead:
+
+1. **Feishu Connection**: Handled directly by nanobot's built-in Feishu Channel via WebSocket
+2. **SDFShell Connection**: Uses nanobot's message queue mechanism (`nanobot.bus.Queue`)
+3. **Message Flow**: External systems → Channel → Queue → Agent → Tools → Response
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        nanobot                               │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐     │
+│  │   Feishu    │    │    Agent    │    │  SDFShell   │     │
+│  │   Channel   │◄──►│   (LLM)     │◄──►│   Channel   │     │
+│  │ (built-in)  │    │             │    │  (skill)    │     │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘     │
+│         │                  │                  │             │
+│         └──────────────────┼──────────────────┘             │
+│                            │                                │
+│                    ┌───────▼───────┐                        │
+│                    │ Message Queue │                        │
+│                    │ (nanobot.bus) │                        │
+│                    └───────────────┘                        │
+└─────────────────────────────────────────────────────────────┘
+         │                                    │
+         ▼                                    ▼
+    Feishu App                          SDF.org COM
+```
 
 ## Message Routing Rules
 
