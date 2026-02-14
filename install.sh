@@ -29,24 +29,40 @@ fi
 
 echo "✓ Python version: $PYTHON_VERSION"
 
-# Set installation directory
-SKILL_DIR="${HOME}/.nanobot/skills/sdfshell"
-VENV_DIR="${HOME}/.nanobot/skills/sdfshell/venv"
+# Set installation directories
+# NOTE: nanobot loads skills from workspace/skills/, NOT from ~/.nanobot/skills/
+WORKSPACE_DIR="${HOME}/.nanobot/workspace"
+SKILL_DIR="${WORKSPACE_DIR}/skills/sdfshell"
+VENV_DIR="${SKILL_DIR}/venv"
+LOG_DIR="${HOME}/.nanobot/logs"
 
 # Create directories
 echo "Creating directories..."
-mkdir -p "${HOME}/.nanobot/skills"
+mkdir -p "${WORKSPACE_DIR}/skills"
+mkdir -p "$LOG_DIR"
 
 # Clone or update repository
 if [ -d "$SKILL_DIR" ]; then
-    echo "Updating existing installation..."
-    cd "$SKILL_DIR"
-    git pull origin main 2>/dev/null || true
-else
-    echo "Cloning repository..."
-    git clone https://github.com/YKaiXu/sdfshell.git "$SKILL_DIR"
-    cd "$SKILL_DIR"
+    echo "Removing old installation..."
+    rm -rf "$SKILL_DIR"
 fi
+
+echo "Cloning repository..."
+git clone https://github.com/YKaiXu/sdfshell.git "$SKILL_DIR"
+cd "$SKILL_DIR"
+
+# Verify clone
+if [ ! -f "sdfshell.py" ]; then
+    echo "Error: Clone failed - sdfshell.py not found"
+    exit 1
+fi
+
+if [ ! -f "SKILL.md" ]; then
+    echo "Error: Clone failed - SKILL.md not found"
+    exit 1
+fi
+
+echo "✓ Repository cloned successfully"
 
 # Create virtual environment
 echo "Creating virtual environment..."
@@ -63,9 +79,6 @@ pip install --upgrade pip --quiet
 echo "Installing dependencies..."
 pip install paramiko paramiko-expect pyte --quiet
 
-# Install nanobot (optional)
-pip install nanobot --quiet 2>/dev/null || echo "Note: nanobot not in PyPI, install manually"
-
 # Deactivate
 deactivate
 
@@ -76,9 +89,39 @@ echo "========================================"
 echo ""
 echo "Skill installed to: $SKILL_DIR"
 echo "Virtual environment: $VENV_DIR"
+echo "Log directory: $LOG_DIR"
 echo ""
 
-# Restart nanobot gateway
+# Verify installation
+echo "Verifying installation..."
+if [ -f "$SKILL_DIR/sdfshell.py" ]; then
+    LINES=$(wc -l < "$SKILL_DIR/sdfshell.py")
+    echo "✓ sdfshell.py ($LINES lines)"
+else
+    echo "✗ sdfshell.py not found"
+fi
+
+if [ -f "$SKILL_DIR/SKILL.md" ]; then
+    SIZE=$(wc -c < "$SKILL_DIR/SKILL.md")
+    echo "✓ SKILL.md ($SIZE bytes)"
+else
+    echo "✗ SKILL.md not found"
+fi
+
+if [ -f "$SKILL_DIR/__init__.py" ]; then
+    echo "✓ __init__.py"
+else
+    echo "✗ __init__.py not found"
+fi
+
+if [ -f "$VENV_DIR/bin/python" ]; then
+    echo "✓ Virtual environment"
+else
+    echo "✗ Virtual environment not found"
+fi
+
+# Restart nanobot gateway (no sudo required)
+echo ""
 echo "Restarting nanobot gateway..."
 
 # Check if nanobot is installed
@@ -88,29 +131,23 @@ if [ ! -f "$NANOBOT_PATH" ]; then
 fi
 
 if [ -n "$NANOBOT_PATH" ]; then
-    # Try systemd user service first
-    if systemctl --user status nanobot &>/dev/null; then
-        echo "Using systemd user service..."
-        systemctl --user restart nanobot
-        echo "✓ Gateway restarted via systemd"
-    # Try systemd system service
-    elif systemctl status nanobot &>/dev/null; then
-        echo "Using systemd system service..."
-        sudo systemctl restart nanobot
-        echo "✓ Gateway restarted via systemd"
+    # Kill existing gateway processes
+    echo "Stopping existing gateway..."
+    pkill -f 'nanobot gateway' 2>/dev/null || true
+    sleep 2
+    
+    # Start new gateway
+    echo "Starting gateway..."
+    nohup "$NANOBOT_PATH" gateway > "$HOME/.nanobot/gateway.log" 2>&1 &
+    sleep 3
+    
+    # Verify
+    if pgrep -f 'nanobot gateway' > /dev/null; then
+        echo "✓ Gateway started successfully"
+        echo "  PID: $(pgrep -f 'nanobot gateway')"
     else
-        # Manual restart
-        echo "Manual restart..."
-        pkill -f 'nanobot gateway' 2>/dev/null || true
-        sleep 2
-        nohup "$NANOBOT_PATH" gateway > "$HOME/.nanobot/gateway.log" 2>&1 &
-        sleep 2
-        if pgrep -f 'nanobot gateway' > /dev/null; then
-            echo "✓ Gateway restarted successfully"
-        else
-            echo "⚠ Gateway restart may have failed"
-            echo "  Please check: tail -f ~/.nanobot/gateway.log"
-        fi
+        echo "⚠ Gateway may have failed to start"
+        echo "  Check log: tail -f ~/.nanobot/gateway.log"
     fi
 else
     echo "⚠ nanobot not found in PATH"
@@ -133,4 +170,5 @@ echo "3. Send message to COM:"
 echo "   Say: 'com: Hello everyone!'"
 echo ""
 echo "Documentation: https://github.com/YKaiXu/sdfshell"
+echo "Logs: $LOG_DIR/sdfshell.log"
 echo ""
