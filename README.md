@@ -12,6 +12,22 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 - **nanobot Queue** - Reliable message passing mechanism
 - **Auto-reconnect** - Automatic SSH reconnection on disconnect
 - **Bidirectional Translation** - Auto-translate messages between languages
+- **Multi-Platform Support** - Works with Feishu, WeChat, Telegram, Discord, Slack, etc.
+
+## Multi-Platform Support
+
+SDFShell works with **ALL** nanobot-connected chat platforms:
+
+| Platform | Support | Platform | Support |
+|----------|---------|----------|---------|
+| Feishu (飞书) | ✅ | WeChat (微信) | ✅ |
+| Telegram | ✅ | Discord | ✅ |
+| Slack | ✅ | Any other | ✅ |
+
+**Any user from any platform can:**
+- Send messages to SDF.org COM chat room
+- Receive COM messages (with auto-translation)
+- Execute SDF shell commands
 
 ## One-Click Install
 
@@ -44,19 +60,23 @@ curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | b
 
 ## Configuration
 
-Add to `~/.nanobot/config.yaml`:
+Add to `~/.nanobot/config.json`:
 
-```yaml
-channels:
-  sdfshell:
-    enabled: true
-    host: sdf.org
-    port: 22
-    username: your_username
-    password: your_password
-    monitor_interval: 3.0
-    queue_type: nanobot
-    reconnect_attempts: 3
+```json
+{
+  "channels": {
+    "sdfshell": {
+      "enabled": true,
+      "host": "sdf.org",
+      "port": 22,
+      "username": "your_username",
+      "password": "your_password",
+      "monitor_interval": 3.0,
+      "queue_type": "nanobot",
+      "reconnect_attempts": 3
+    }
+  }
+}
 ```
 
 ## COM Commands
