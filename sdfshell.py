@@ -697,8 +697,8 @@ class SDFShellChannel(BaseChannel):
         self.password = config.get("password") or os.environ.get("SDF_PASSWORD", "")
         self.monitor_interval = config.get("monitor_interval", 3.0)
         
-        # 队列配置
-        self.queue_type = config.get("queue_type", "memory")
+        # 队列配置 - 默认使用nanobot Queue
+        self.queue_type = config.get("queue_type", "nanobot" if HAS_NANOBOT else "memory")
         self.redis_url = config.get("redis_url", "redis://localhost:6379/0")
         
         # 重连配置
