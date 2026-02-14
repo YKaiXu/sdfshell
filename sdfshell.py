@@ -317,25 +317,53 @@ class RedisQueue(MessageQueue):
 
 
 class NanobotQueueAdapter(MessageQueue):
-    """nanobot队列适配器"""
+    """nanobot queue adapter - Integrates with nanobot's message bus
+    
+    Uses nanobot.bus.Queue for event-driven message passing
+    """
     
     def __init__(self):
         if not HAS_NANOBOT or NanobotQueue is None:
             raise QueueError("nanobot not available")
         self._queue = NanobotQueue()
+        self._subscribers: dict[str, list] = {}
+        log.info("[Queue] NanobotQueueAdapter initialized")
     
     async def publish(self, channel: str, message: dict) -> None:
-        if Event:
-            event = Event(type="message", channel=channel, data=message)
-            await self._queue.publish(event)
+        """Publish message to nanobot message bus"""
+        try:
+            if Event:
+                event = Event(
+                    type="sdfshell_message",
+                    channel=channel,
+                    data=message,
+                    timestamp=time.time()
+                )
+                await self._queue.publish(event)
+                log.debug(f"[Queue] Published to {channel}: {message.get('type', 'unknown')}")
+            else:
+                log.warning("[Queue] Event class not available, message not published")
+        except Exception as e:
+            log.error(f"[Queue] Publish error: {e}")
     
     async def subscribe(self, channel: str) -> AsyncGenerator[dict, None]:
+        """Subscribe to messages from nanobot message bus"""
         async for event in self._queue.subscribe():
-            if hasattr(event, 'channel') and event.channel == channel:
-                yield event.data if hasattr(event, 'data') else {}
+            try:
+                # Filter by channel if specified
+                if hasattr(event, 'channel') and event.channel == channel:
+                    yield event.data if hasattr(event, 'data') else {}
+                elif not hasattr(event, 'channel'):
+                    # No channel filter, yield all
+                    yield event.data if hasattr(event, 'data') else {}
+            except Exception as e:
+                log.error(f"[Queue] Subscribe error: {e}")
+                continue
     
     async def close(self) -> None:
-        pass
+        """Close the queue"""
+        self._subscribers.clear()
+        log.info("[Queue] NanobotQueueAdapter closed")
 
 
 def create_queue(queue_type: str = "memory", **kwargs) -> MessageQueue:
@@ -351,13 +379,18 @@ def create_queue(queue_type: str = "memory", **kwargs) -> MessageQueue:
 # ============== 终端模拟器 ==============
 
 class TerminalEmulator:
-    """pyte终端模拟器 - 解析ncurses输出"""
+    """pyte terminal emulator - Parse ncurses output for COM chat messages
+    
+    Event-driven message extraction with deduplication
+    """
     
     def __init__(self, cols: int = 80, rows: int = 24):
         if not HAS_PYTE:
             raise SDFShellError("pyte not installed: pip install pyte")
         self.cols = cols
         self.rows = rows
+        self._seen_messages: set[str] = set()  # Deduplication
+        self._max_seen = 1000  # Limit memory
         self._reset_screen()
     
     def _reset_screen(self) -> None:
@@ -375,13 +408,17 @@ class TerminalEmulator:
         return '\n'.join(line for line in lines if line)
     
     def get_messages(self) -> list[str]:
-        """提取用户聊天消息"""
+        """Extract user chat messages with deduplication
+        
+        Returns only NEW messages not seen before
+        """
         messages = []
         system_keywords = frozenset([
             'welcome', 'connected', 'disconnected', 'system', 'server',
-            'online', 'users', 'status', 'help', 'error', 'warning'
+            'online', 'users', 'status', 'help', 'error', 'warning',
+            'has joined', 'has left', 'entered', 'exited'
         ])
-        system_users = frozenset(['system', 'server', 'bot', 'admin', 'root'])
+        system_users = frozenset(['system', 'server', 'bot', 'admin', 'root', '***'])
         
         for line in self.screen.display:
             line = clean_text(line)
@@ -392,11 +429,13 @@ class TerminalEmulator:
             if any(kw in line_lower for kw in system_keywords):
                 continue
             
-            # 匹配多种消息格式
+            # Match COM chat message formats
             patterns = [
-                r'^[<\[]?(\w+)[>\]:]\s*(.+)$',  # user: msg 或 <user> msg
+                r'^[<\[]?(\w+)[>\]:]\s*(.+)$',  # user: msg or <user> msg
                 r'^(\w+)\s*>\s*(.+)$',           # user > msg
                 r'^\[(\w+)\]\s*(.+)$',           # [user] msg
+                r'^(\w+)\s+\|\s*(.+)$',          # user | msg (SDF format)
+                r'^(\w+)\s{2,}(.+)$',            # user  msg (multi-space)
             ]
             
             for pattern in patterns:
@@ -404,13 +443,21 @@ class TerminalEmulator:
                 if match:
                     user, msg = match.group(1).strip(), match.group(2).strip()
                     if msg and user.lower() not in system_users:
-                        messages.append(f"{user}: {msg}")
+                        msg_key = f"{user}:{msg}"
+                        # Deduplication
+                        if msg_key not in self._seen_messages:
+                            self._seen_messages.add(msg_key)
+                            messages.append(f"{user}: {msg}")
+                            # Limit memory
+                            if len(self._seen_messages) > self._max_seen:
+                                self._seen_messages = set(list(self._seen_messages)[-500:])
                     break
         
         return messages
     
     def reset(self) -> None:
         self._reset_screen()
+        self._seen_messages.clear()
 
 
 # ============== SSH会话 ==============
@@ -692,38 +739,74 @@ class COMSession:
             raise COMError(f"Read failed: {e}") from e
     
     async def start_monitor(self, callback: Callable[[list[str]], None], interval: float = 3.0) -> str:
-        """启动消息监控"""
+        """Start message monitoring - Event-driven polling
+        
+        Monitors COM chat room for new messages and triggers callback
+        """
         if self._monitoring:
+            log.warning("[COM] Monitor already running")
             return "Already monitoring"
         
         self._message_callback = callback
         self._monitor_interval = interval
         self._monitoring = True
         
+        log.info(f"[COM] Starting message monitor (interval: {interval}s)")
+        
         async def _monitor_loop():
+            """Event-driven monitoring loop"""
+            consecutive_errors = 0
+            max_errors = 5
+            
             while self._monitoring and self._in_com:
                 try:
-                    messages = await self.read_messages(count=5)
+                    # Read new messages
+                    messages = await self.read_messages(count=10)
+                    
                     if messages and self._message_callback:
+                        # Trigger callback with new messages
                         self._message_callback(messages)
+                        log.debug(f"[COM] Processed {len(messages)} new messages")
+                    
+                    consecutive_errors = 0  # Reset error counter on success
+                    
                 except Exception as e:
-                    log.error(f"Monitor error: {e}")
+                    consecutive_errors += 1
+                    log.error(f"[COM] Monitor error ({consecutive_errors}/{max_errors}): {e}")
+                    
+                    if consecutive_errors >= max_errors:
+                        log.error("[COM] Too many errors, stopping monitor")
+                        self._monitoring = False
+                        break
+                    
+                    # Wait longer after error
+                    await asyncio.sleep(self._monitor_interval * 2)
+                    continue
+                
                 await asyncio.sleep(self._monitor_interval)
+            
+            log.info("[COM] Monitor loop ended")
         
         self._monitor_task = asyncio.create_task(_monitor_loop())
-        log.info("Message monitor started")
+        log.info("[COM] ✓ Message monitor started")
         return "Monitor started"
     
     async def stop_monitor(self) -> str:
-        """停止监控"""
+        """Stop message monitoring"""
+        if not self._monitoring:
+            return "Not monitoring"
+        
         self._monitoring = False
+        
         if self._monitor_task:
             self._monitor_task.cancel()
             try:
                 await self._monitor_task
             except asyncio.CancelledError:
                 pass
-        log.info("Message monitor stopped")
+            self._monitor_task = None
+        
+        log.info("[COM] ✓ Message monitor stopped")
         return "Monitor stopped"
 
 
@@ -940,29 +1023,31 @@ class SDFShellChannel(BaseChannel):
         log.info("SDFShell channel stopped")
     
     def _on_com_message(self, messages: list[str]) -> None:
-        """处理COM消息回调
+        """Handle COM message callback - Route to nanobot via message queue
         
-        Process COM message callback with enhanced formatting
-        增强格式化的COM消息回调处理
+        Event-driven message processing:
+        1. Parse and format messages
+        2. Add metadata for translation/summarization
+        3. Publish to nanobot message bus
         """
         if not messages:
             return
         
+        log.info(f"[SDFShell] Processing {len(messages)} COM messages")
+        
         # Format messages for nanobot to process
-        # 格式化消息供nanobot处理
         formatted_messages = []
         for msg in messages:
             formatted_messages.append({
                 "raw": msg,
                 "timestamp": time.time(),
-                "source": "com_chat",
-                "needs_translation": True,  # Flag for nanobot to translate
-                "needs_summary": len(messages) > 3  # Flag for summary if many messages
+                "source": "sdf_com_chat",
+                "needs_translation": True,
+                "needs_summary": len(messages) > 3
             })
         
-        # Publish to queue with metadata
-        # 发布到队列并附带元数据
-        asyncio.create_task(self._queue.publish(self._channel_name, {
+        # Create event data
+        event_data = {
             "type": "com_messages",
             "channel": self._channel_name,
             "messages": formatted_messages,
@@ -973,8 +1058,18 @@ class SDFShellChannel(BaseChannel):
                 "2) Summarize if multiple messages, "
                 "3) Add helpful context/reminders when appropriate"
             )
-        }))
-        log.debug(f"COM messages queued: {len(messages)} messages")
+        }
+        
+        # Publish to queue asynchronously
+        if self._queue:
+            try:
+                # Create task to publish (non-blocking)
+                asyncio.create_task(self._queue.publish(self._channel_name, event_data))
+                log.debug(f"[SDFShell] Queued {len(messages)} messages for nanobot")
+            except Exception as e:
+                log.error(f"[SDFShell] Failed to queue messages: {e}")
+        else:
+            log.warning("[SDFShell] No queue available, messages not forwarded")
     
     async def receive(self) -> AsyncGenerator[dict, None]:
         """接收消息（nanobot调用）"""
