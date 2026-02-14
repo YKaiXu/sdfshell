@@ -1,3 +1,21 @@
+---
+name: sdfshell
+description: SDF.org COM Chat Channel for nanobot - interact with SDF.org COM chat room via SSH
+homepage: https://github.com/YKaiXu/sdfshell
+entry_point: tools:register_tools
+tools:
+  - set_config
+  - get_config_status
+  - ssh_connect
+  - com_login
+  - com_send
+  - com_read
+  - com_logout
+  - ssh_disconnect
+  - ssh_exec
+metadata: {"nanobot":{"emoji":"💬","requires":{"bins":["python3"],"env":[]}}}
+---
+
 # SDFShell - SDF.org COM Chat Channel for nanobot
 
 SDF.org COM chat room nanobot channel for bidirectional message passing with auto-translation support.
