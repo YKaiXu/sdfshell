@@ -344,4 +344,10 @@ Exited 已退出
 5. Messages auto-filter ANSI control characters 消息会自动过滤ANSI控制字符
 6. Default uses nanobot message queue, no extra deployment needed 默认使用nanobot消息队列，无需额外部署
 7. "sh:" prefix for SDF commands, nanobot translates natural language "sh:"前缀用于执行SDF命令，nanobot需将自然语言翻译为正确命令
-yu
+
+## Author / 作者
+
+**YUKAIXU**
+- Location / 坐标: Hubei, China / 中国湖北
+- Email / 邮箱: yukaixu@outlook.com
+- GitHub: https://github.com/YKaiXu
