@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sdfshell"
-version = "1.0.0"
+version = "2.3.0"
 description = "SDFShell - SDF.org COM Chat Channel for nanobot"
 readme = "README.md"
 license = {text = "MIT"}
