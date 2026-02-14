@@ -1,0 +1,44 @@
+[Unit]
+Description=SDFShell - SDF.org COM Chat Channel for nanobot
+Documentation=https://github.com/YKaiXu/sdfshell
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%u
+Group=%u
+WorkingDirectory=%h/.nanobot/skills/sdfshell
+Environment="PATH=%h/.nanobot/skills/sdfshell/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+Environment="SDFSHELL_LOG_LEVEL=INFO"
+
+# Main process - runs as nanobot channel
+ExecStart=%h/.nanobot/skills/sdfshell/venv/bin/python -c "from sdfshell import SDFShellChannel; import asyncio; asyncio.run(SDFShellChannel({}).start())"
+
+# Restart policy
+Restart=on-failure
+RestartSec=10
+StartLimitInterval=300
+StartLimitBurst=5
+
+# Resource limits
+LimitNOFILE=65535
+MemoryMax=256M
+CPUQuota=50%
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.nanobot/skills/sdfshell
+ReadWritePaths=%h/.nanobot/logs
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sdfshell
+
+[Install]
+WantedBy=default.target
