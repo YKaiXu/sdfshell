@@ -28,6 +28,7 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import datetime, timezone, timedelta
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
@@ -382,7 +383,11 @@ class TerminalEmulator:
     """pyte terminal emulator - Parse ncurses output for COM chat messages
     
     Event-driven message extraction with deduplication
+    Output: Only username, message content, and timestamp (converted to Beijing time)
     """
+    
+    # Beijing timezone (UTC+8)
+    BEIJING_TZ = timezone(timedelta(hours=8))
     
     def __init__(self, cols: int = 80, rows: int = 24):
         if not HAS_PYTE:
@@ -407,16 +412,61 @@ class TerminalEmulator:
         lines = [clean_text(line) for line in self.screen.display]
         return '\n'.join(line for line in lines if line)
     
-    def get_messages(self) -> list[str]:
+    def _extract_timestamp(self, line: str) -> str | None:
+        """Extract timestamp from line and convert to Beijing time
+        
+        Supports formats:
+        - [HH:MM] or [HH:MM:SS]
+        - HH:MM or HH:MM:SS
+        - (HH:MM) or (HH:MM:SS)
+        
+        Returns Beijing time string (UTC+8)
+        """
+        time_patterns = [
+            r'\[(\d{1,2}:\d{2}(?::\d{2})?)\]',  # [HH:MM] or [HH:MM:SS]
+            r'\((\d{1,2}:\d{2}(?::\d{2})?)\)',  # (HH:MM) or (HH:MM:SS)
+            r'(\d{1,2}:\d{2}(?::\d{2})?)',      # HH:MM or HH:MM:SS
+        ]
+        for pattern in time_patterns:
+            match = re.search(pattern, line)
+            if match:
+                time_str = match.group(1)
+                try:
+                    # Parse time and convert to Beijing time
+                    now = datetime.now(self.BEIJING_TZ)
+                    if ':' in time_str:
+                        parts = time_str.split(':')
+                        hour = int(parts[0])
+                        minute = int(parts[1])
+                        second = int(parts[2]) if len(parts) > 2 else 0
+                        
+                        # Create datetime with today's date and parsed time
+                        msg_time = datetime(
+                            now.year, now.month, now.day,
+                            hour, minute, second,
+                            tzinfo=self.BEIJING_TZ
+                        )
+                        return msg_time.strftime("%H:%M:%S")
+                except (ValueError, IndexError):
+                    pass
+                return time_str
+        return None
+    
+    def get_messages(self) -> list[dict]:
         """Extract user chat messages with deduplication
         
-        Returns only NEW messages not seen before
+        Returns list of dicts with ONLY:
+        - username: str
+        - content: str
+        - timestamp: str | None (Beijing time, UTC+8)
+        
+        All other terminal artifacts are stripped by pyte
         """
         messages = []
         system_keywords = frozenset([
             'welcome', 'connected', 'disconnected', 'system', 'server',
             'online', 'users', 'status', 'help', 'error', 'warning',
-            'has joined', 'has left', 'entered', 'exited'
+            'has joined', 'has left', 'entered', 'exited', '***'
         ])
         system_users = frozenset(['system', 'server', 'bot', 'admin', 'root', '***'])
         
@@ -429,6 +479,12 @@ class TerminalEmulator:
             if any(kw in line_lower for kw in system_keywords):
                 continue
             
+            # Extract timestamp first (converted to Beijing time)
+            timestamp = self._extract_timestamp(line)
+            
+            # Remove timestamp from line for user/message parsing
+            line_no_time = re.sub(r'[\[\(]?\d{1,2}:\d{2}(?::\d{2})?[\]\)]?', '', line).strip()
+            
             # Match COM chat message formats
             patterns = [
                 r'^[<\[]?(\w+)[>\]:]\s*(.+)$',  # user: msg or <user> msg
@@ -439,15 +495,20 @@ class TerminalEmulator:
             ]
             
             for pattern in patterns:
-                match = re.match(pattern, line)
+                match = re.match(pattern, line_no_time)
                 if match:
-                    user, msg = match.group(1).strip(), match.group(2).strip()
-                    if msg and user.lower() not in system_users:
-                        msg_key = f"{user}:{msg}"
+                    user, content = match.group(1).strip(), match.group(2).strip()
+                    if content and user.lower() not in system_users:
+                        msg_key = f"{user}:{content}"
                         # Deduplication
                         if msg_key not in self._seen_messages:
                             self._seen_messages.add(msg_key)
-                            messages.append(f"{user}: {msg}")
+                            # Return ONLY username, content, timestamp (Beijing time)
+                            messages.append({
+                                "username": user,
+                                "content": content,
+                                "timestamp": timestamp
+                            })
                             # Limit memory
                             if len(self._seen_messages) > self._max_seen:
                                 self._seen_messages = set(list(self._seen_messages)[-500:])
@@ -721,8 +782,11 @@ class COMSession:
             log.error(f"[COM] ✗ Send failed: {type(e).__name__}: {e}")
             raise COMError(f"Send failed: {e}") from e
     
-    async def read_messages(self, count: int = 10) -> list[str]:
-        """读取消息"""
+    async def read_messages(self, count: int = 10) -> list[dict]:
+        """Read messages from COM chat
+        
+        Returns list of dicts with: username, content, timestamp
+        """
         if not self._in_com:
             log.error("[COM] Cannot read: not in COM")
             raise COMError("Not in COM")
@@ -1022,25 +1086,28 @@ class SDFShellChannel(BaseChannel):
         
         log.info("SDFShell channel stopped")
     
-    def _on_com_message(self, messages: list[str]) -> None:
+    def _on_com_message(self, messages: list[dict]) -> None:
         """Handle COM message callback - Route to nanobot via message queue
         
         Event-driven message processing:
-        1. Parse and format messages
+        1. Messages already parsed by pyte (username, content, timestamp only)
         2. Add metadata for translation/summarization
         3. Publish to nanobot message bus
+        
+        Input: list of dicts with {username, content, timestamp}
         """
         if not messages:
             return
         
         log.info(f"[SDFShell] Processing {len(messages)} COM messages")
         
-        # Format messages for nanobot to process
+        # Format messages for nanobot - already clean from pyte
         formatted_messages = []
         for msg in messages:
             formatted_messages.append({
-                "raw": msg,
-                "timestamp": time.time(),
+                "username": msg.get("username", "unknown"),
+                "content": msg.get("content", ""),
+                "timestamp": msg.get("timestamp"),
                 "source": "sdf_com_chat",
                 "needs_translation": True,
                 "needs_summary": len(messages) > 3
@@ -1063,7 +1130,6 @@ class SDFShellChannel(BaseChannel):
         # Publish to queue asynchronously
         if self._queue:
             try:
-                # Create task to publish (non-blocking)
                 asyncio.create_task(self._queue.publish(self._channel_name, event_data))
                 log.debug(f"[SDFShell] Queued {len(messages)} messages for nanobot")
             except Exception as e:
