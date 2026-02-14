@@ -65,18 +65,65 @@ SDFShell works with **ALL** nanobot-connected chat platforms:
 
 ## Message Routing Rules
 
-### Two Prefix Types
+**CRITICAL: When user message starts with prefix, you MUST call the corresponding tool:**
 
-| Prefix | Purpose | Description |
-|--------|---------|-------------|
-| `com:` | **Send Chat Message** | Send message to COM chat room (auto-translate to English) |
-| `sh:` | **Execute Command** | Execute SSH/SDF command (no translation) |
-| No prefix | Normal conversation | Chat with nanobot, not sent to COM |
+| User Message | Tool to Call | Parameters |
+|--------------|--------------|------------|
+| `com: Hello` | `com_send` | `message="Hello"` |
+| `com:hello` | `com_send` | `message="hello"` |
+| `com: l` | `com_send` | `message="l"` (list rooms) |
+| `com: g spacebar` | `com_send` | `message="g spacebar"` (join room) |
+| `sh: ls -la` | `ssh_exec` | `command="ls -la"` |
+| `sh:df -h` | `ssh_exec` | `command="df -h"` |
+| `sh: help` | `ssh_exec` | `command="help"` |
 
-### Important Notes
+**DO NOT execute `com:` or `sh:` as bash commands!**
 
-- **`com:` prefix**: Message content will be **auto-translated to English** before sending to COM chat room
-- **`sh:` prefix**: Command will be executed **without translation**, nanobot only translates natural language to correct command
+Instead, extract the message after the prefix and call the appropriate tool.
+
+### Routing Logic
+
+```python
+def route_message(user_message: str) -> dict:
+    """Route user message to appropriate handler"""
+    message = user_message.strip()
+    
+    # COM chat message
+    if message.lower().startswith("com:"):
+        content = message[4:].strip()
+        return {"tool": "com_send", "message": content}
+    
+    # SSH command
+    if message.lower().startswith("sh:"):
+        command = message[3:].strip()
+        return {"tool": "ssh_exec", "command": command}
+    
+    # Regular message - no routing
+    return {"tool": None, "message": message}
+```
+
+### Usage Examples
+
+**Example 1: Send chat message**
+```
+User: com: Hello everyone!
+Action: Call com_send(message="Hello everyone!")
+Result: Message sent to COM chat room
+```
+
+**Example 2: List chat rooms**
+```
+User: com: l
+Action: Call com_send(message="l")
+Result: List available chat rooms
+```
+
+**Example 3: Execute SSH command**
+```
+User: sh: ls -la
+Action: Call ssh_exec(command="ls -la")
+Result: Execute command on SDF server
+```
 
 ### Message Flow
 
