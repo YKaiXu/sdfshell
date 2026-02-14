@@ -727,6 +727,110 @@ class COMSession:
         return "Monitor stopped"
 
 
+# ============== 配置管理 ==============
+
+CONFIG_FILE = os.path.expanduser("~/.nanobot/skills/sdfshell/config.json")
+
+def load_config() -> dict:
+    """加载配置
+    
+    Load configuration from file
+    从文件加载配置
+    """
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except Exception as e:
+        log.warning(f"Failed to load config: {e}")
+    return {}
+
+def save_config(config: dict) -> bool:
+    """保存配置
+    
+    Save configuration to file
+    保存配置到文件
+    """
+    try:
+        config_dir = os.path.dirname(CONFIG_FILE)
+        if not os.path.exists(config_dir):
+            os.makedirs(config_dir, exist_ok=True)
+        
+        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        
+        log.info(f"Config saved to {CONFIG_FILE}")
+        return True
+    except Exception as e:
+        log.error(f"Failed to save config: {e}")
+        return False
+
+def set_config(host: str = None, username: str = None, password: str = None, port: int = 22) -> str:
+    """设置配置 (对话配置入口)
+    
+    Set configuration via conversation
+    通过对话设置配置
+    
+    Args:
+        host: SSH host address / SSH主机地址
+        username: SSH username / SSH用户名
+        password: SSH password / SSH密码
+        port: SSH port / SSH端口
+    
+    Returns:
+        Configuration result message
+        配置结果消息
+    """
+    config = load_config()
+    
+    if host:
+        config["host"] = host
+    if username:
+        config["username"] = username
+    if password:
+        config["password"] = password
+    if port:
+        config["port"] = port
+    
+    if save_config(config):
+        masked_password = "****" if config.get("password") else "not set"
+        return f"""✅ Configuration saved:
+• Host: {config.get('host', 'not set')}
+• Port: {config.get('port', 22)}
+• Username: {config.get('username', 'not set')}
+• Password: {masked_password}
+
+Ready to connect! Say "Connect to SDF" to start."""
+    else:
+        return "❌ Failed to save configuration. Please check permissions."
+
+def get_config_status() -> str:
+    """获取配置状态
+    
+    Get current configuration status
+    获取当前配置状态
+    """
+    config = load_config()
+    
+    if not config:
+        return """⚠️ SDFShell is not configured yet!
+
+Please configure your credentials:
+• Say "Set SDF host to sdf.org"
+• Say "Set SDF username to YOUR_USERNAME"
+• Say "Set SDF password to YOUR_PASSWORD"
+Or: "Configure SDF with username YOUR_NAME and password YOUR_PASS" """
+    
+    masked_password = "****" if config.get("password") else "not set"
+    return f"""📋 Current Configuration:
+• Host: {config.get('host', 'not set')}
+• Port: {config.get('port', 22)}
+• Username: {config.get('username', 'not set')}
+• Password: {masked_password}
+
+{'✅ Ready to connect!' if config.get('host') and config.get('username') and config.get('password') else '⚠️ Please complete configuration.'} """
+
+
 # ============== SDFShell Channel ==============
 
 class SDFShellChannel(BaseChannel):
@@ -749,11 +853,15 @@ class SDFShellChannel(BaseChannel):
     def __init__(self, config: dict):
         super().__init__(config)
         
-        # 连接配置
-        self.host = config.get("host") or os.environ.get("SDF_HOST", "sdf.org")
-        self.port = config.get("port") or int(os.environ.get("SDF_PORT", "22"))
-        self.username = config.get("username") or os.environ.get("SDF_USERNAME", "")
-        self.password = config.get("password") or os.environ.get("SDF_PASSWORD", "")
+        # Try to load from config file first / 首先尝试从配置文件加载
+        saved_config = load_config()
+        
+        # 连接配置 (priority: config param > saved config > env var > default)
+        # 连接配置 (优先级: 配置参数 > 保存的配置 > 环境变量 > 默认值)
+        self.host = config.get("host") or saved_config.get("host") or os.environ.get("SDF_HOST", "sdf.org")
+        self.port = config.get("port") or saved_config.get("port") or int(os.environ.get("SDF_PORT", "22"))
+        self.username = config.get("username") or saved_config.get("username") or os.environ.get("SDF_USERNAME", "")
+        self.password = config.get("password") or saved_config.get("password") or os.environ.get("SDF_PASSWORD", "")
         self.monitor_interval = config.get("monitor_interval", 3.0)
         
         # 队列配置 - 默认使用nanobot Queue
@@ -770,10 +878,25 @@ class SDFShellChannel(BaseChannel):
         
         self._running = False
         self._channel_name = "sdfshell"
+        
+        # Log configuration status / 记录配置状态
+        if not self.username or not self.password:
+            log.warning("[SDFShell] Configuration incomplete - username/password not set")
+            log.info("[SDFShell] Please configure using: set_config(username='...', password='...')")
     
     async def start(self) -> None:
         """启动通道"""
         log.info(f"Starting SDFShell channel: {self.host}")
+        
+        # Check configuration / 检查配置
+        if not self.username or not self.password:
+            log.warning("[SDFShell] Cannot start: username/password not configured")
+            log.info("[SDFShell] Please configure first:")
+            log.info("  - Say 'Set SDF username to YOUR_NAME'")
+            log.info("  - Say 'Set SDF password to YOUR_PASS'")
+            log.info("  - Or add to ~/.nanobot/config.yaml")
+            self._running = True  # Mark as running but not connected
+            return
         
         # 创建消息队列
         try:
@@ -789,17 +912,14 @@ class SDFShellChannel(BaseChannel):
             self._queue = MemoryQueue()
         
         # 连接SSH
-        if self.username and self.password:
-            await self._ssh.connect(self.host, self.username, self.password, self.port)
-            await self._com.login()
-            
-            # 启动消息监控
-            await self._com.start_monitor(
-                callback=self._on_com_message,
-                interval=self.monitor_interval
-            )
-        else:
-            log.warning("Username/password not configured. Use ssh_connect to connect manually.")
+        await self._ssh.connect(self.host, self.username, self.password, self.port)
+        await self._com.login()
+        
+        # 启动消息监控
+        await self._com.start_monitor(
+            callback=self._on_com_message,
+            interval=self.monitor_interval
+        )
         
         self._running = True
         log.info("SDFShell channel started")
@@ -1149,110 +1269,6 @@ Or say "Configure SDF with username YOUR_NAME and password YOUR_PASS"
 • Use "com: g spacebar" to join the active room
 
 Ask me anything about SDF.org!"""
-
-
-# ============== 配置管理 ==============
-
-CONFIG_FILE = os.path.expanduser("~/.nanobot/skills/sdfshell/config.json")
-
-def load_config() -> dict:
-    """加载配置
-    
-    Load configuration from file
-    从文件加载配置
-    """
-    try:
-        if os.path.exists(CONFIG_FILE):
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception as e:
-        log.warning(f"Failed to load config: {e}")
-    return {}
-
-def save_config(config: dict) -> bool:
-    """保存配置
-    
-    Save configuration to file
-    保存配置到文件
-    """
-    try:
-        config_dir = os.path.dirname(CONFIG_FILE)
-        if not os.path.exists(config_dir):
-            os.makedirs(config_dir, exist_ok=True)
-        
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-        
-        log.info(f"Config saved to {CONFIG_FILE}")
-        return True
-    except Exception as e:
-        log.error(f"Failed to save config: {e}")
-        return False
-
-def set_config(host: str = None, username: str = None, password: str = None, port: int = 22) -> str:
-    """设置配置 (对话配置入口)
-    
-    Set configuration via conversation
-    通过对话设置配置
-    
-    Args:
-        host: SSH host address / SSH主机地址
-        username: SSH username / SSH用户名
-        password: SSH password / SSH密码
-        port: SSH port / SSH端口
-    
-    Returns:
-        Configuration result message
-        配置结果消息
-    """
-    config = load_config()
-    
-    if host:
-        config["host"] = host
-    if username:
-        config["username"] = username
-    if password:
-        config["password"] = password
-    if port:
-        config["port"] = port
-    
-    if save_config(config):
-        masked_password = "****" if config.get("password") else "not set"
-        return f"""✅ Configuration saved:
-• Host: {config.get('host', 'not set')}
-• Port: {config.get('port', 22)}
-• Username: {config.get('username', 'not set')}
-• Password: {masked_password}
-
-Ready to connect! Say "Connect to SDF" to start."""
-    else:
-        return "❌ Failed to save configuration. Please check permissions."
-
-def get_config_status() -> str:
-    """获取配置状态
-    
-    Get current configuration status
-    获取当前配置状态
-    """
-    config = load_config()
-    
-    if not config:
-        return """⚠️ SDFShell is not configured yet!
-
-Please configure your credentials:
-• Say "Set SDF host to sdf.org"
-• Say "Set SDF username to YOUR_USERNAME"
-• Say "Set SDF password to YOUR_PASSWORD"
-Or: "Configure SDF with username YOUR_NAME and password YOUR_PASS" """
-    
-    masked_password = "****" if config.get("password") else "not set"
-    return f"""📋 Current Configuration:
-• Host: {config.get('host', 'not set')}
-• Port: {config.get('port', 22)}
-• Username: {config.get('username', 'not set')}
-• Password: {masked_password}
-
-{'✅ Ready to connect!' if config.get('host') and config.get('username') and config.get('password') else '⚠️ Please complete configuration.'} """
 
 
 def format_com_messages(messages: list[dict], user_language: str = "auto") -> str:
