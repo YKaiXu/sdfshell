@@ -68,12 +68,29 @@ com_send(message='Hello everyone!')
 
 ## Message Routing Rules
 
-**When user message starts with prefix, use exec tool to call SDFShell:**
+**CRITICAL: Each Python call is a separate process, connection state is NOT preserved!**
+
+**When user sends `com:` message, you MUST execute the FULL flow in ONE command:**
+
+### Correct Pattern (Full Flow in One Command):
+```bash
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'
+from sdfshell import ssh_connect, com_login, com_send, com_logout, ssh_disconnect
+ssh_connect()
+com_login()
+com_send("YOUR_MESSAGE")
+com_logout()
+ssh_disconnect()
+PYEOF
+```
+
+### User Message → exec Command Mapping:
 
 | User Message | exec Command |
 |--------------|--------------|
-| `com: Hello` | `cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import com_send; com_send(message='Hello')"` |
-| `sh: ls -la` | `cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import ssh_exec; ssh_exec(command='ls -la')"` |
+| `com: Hello` | `cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'\nfrom sdfshell import ssh_connect, com_login, com_send, com_logout, ssh_disconnect\nssh_connect()\ncom_login()\ncom_send("Hello")\ncom_logout()\nssh_disconnect()\nPYEOF` |
+| `com: l` (list rooms) | `cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'\nfrom sdfshell import ssh_connect, com_login, com_send, com_read, com_logout, ssh_disconnect\nssh_connect()\ncom_login()\ncom_send("l")\nprint(com_read(20))\ncom_logout()\nssh_disconnect()\nPYEOF` |
+| `sh: whoami` | `cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'\nfrom sdfshell import ssh_exec\nprint(ssh_exec("whoami"))\nPYEOF` |
 
 **DO NOT execute `com:` or `sh:` as direct bash commands!**
 
@@ -86,41 +103,69 @@ com_send(message='Hello everyone!')
 ```
 You have a skill called "sdfshell" that lets you interact with SDF.org COM chat room.
 
-## IMPORTANT: How to Call SDFShell Functions
+## CRITICAL: Connection State NOT Preserved
 
-SDFShell functions are NOT registered as tools. You must use the exec tool to call them.
+Each Python call is a **separate process**. Connection state is NOT preserved between calls.
 
-### Pattern:
+You MUST execute the FULL flow in ONE command using heredoc:
+
+### Pattern for COM messages:
 ```bash
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import FUNCTION; FUNCTION(PARAMS)"
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'
+from sdfshell import ssh_connect, com_login, com_send, com_logout, ssh_disconnect
+ssh_connect()
+com_login()
+com_send("YOUR_MESSAGE")
+com_logout()
+ssh_disconnect()
+PYEOF
 ```
 
-### Step 1: Configure Credentials
+### Step 1: Configure Credentials (ONE TIME ONLY)
 When user says "Set SDF username to XXX" or "Set SDF password to XXX":
 ```bash
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import set_config; set_config(username='XXX', password='YYY')"
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import set_config; set_config(username='XXX', password='YYY')"
 ```
 
-### Step 2: Connect to SDF
-When user says "Connect to SDF":
-```bash
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import ssh_connect, com_login; ssh_connect(); com_login()"
-```
-
-### Step 3: Send COM Message
+### Step 2: Send COM Message (FULL FLOW)
 When user says "com: Hello everyone!":
 ```bash
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import com_send; com_send(message='Hello everyone!')"
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'
+from sdfshell import ssh_connect, com_login, com_send, com_logout, ssh_disconnect
+ssh_connect()
+com_login()
+com_send("Hello everyone!")
+com_logout()
+ssh_disconnect()
+PYEOF
 ```
 
-### Step 4: Execute SSH Command
-When user says "sh: ls -la":
+### Step 3: List Rooms (com: l)
+When user says "com: l":
 ```bash
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "from sdfshell import ssh_exec; ssh_exec(command='ls -la')"
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'
+from sdfshell import ssh_connect, com_login, com_send, com_read, com_logout, ssh_disconnect
+ssh_connect()
+com_login()
+com_send("l")
+import time; time.sleep(2)
+print(com_read(20))
+com_logout()
+ssh_disconnect()
+PYEOF
+```
+
+### Step 4: Execute SSH Command (sh: prefix)
+When user says "sh: whoami":
+```bash
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 << 'PYEOF'
+from sdfshell import ssh_exec
+print(ssh_exec("whoami"))
+PYEOF
 ```
 
 ### Available Functions:
-- set_config(username, password) - Configure SDF credentials
+- set_config(username, password) - Configure SDF credentials (one time)
 - ssh_connect() - Connect to SDF server
 - com_login() - Login to COM chat room
 - com_send(message) - Send message to COM
