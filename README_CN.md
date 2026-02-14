@@ -100,11 +100,63 @@ Filesystem     Size  Used Avail Use%
 
 ## 系统要求
 
+### 基础依赖
+
 - Python 3.10+
+- Git
+- pip (Python包管理器)
+- SDF.org账号
+
+### 安装系统依赖
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install -y python3.10 python3-pip python3-venv git
+```
+
+**CentOS/RHEL/Fedora:**
+```bash
+# CentOS/RHEL
+sudo yum install -y python3 python3-pip python3-venv git
+
+# Fedora
+sudo dnf install -y python3 python3-pip python3-venv git
+```
+
+**macOS:**
+```bash
+# 使用Homebrew
+brew install python@3.10 git
+```
+
+**Arch Linux:**
+```bash
+sudo pacman -S python python-pip python-virtualenv git
+```
+
+### Python依赖
+
+以下依赖由安装脚本自动安装：
 - paramiko >= 3.0.0
 - paramiko-expect >= 0.3.5
 - pyte >= 0.8.0
-- SDF.org账号
+
+### 验证安装
+
+```bash
+# 检查Python版本（需要3.10+）
+python3 --version
+
+# 检查pip
+pip3 --version
+
+# 检查git
+git --version
+
+# 检查venv模块
+python3 -m venv --help
+```
 
 ## 作者
 
