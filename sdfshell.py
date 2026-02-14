@@ -1,31 +1,40 @@
 #!/usr/bin/env python3
 """SDFShell - SDF.org COM Chat Channel for nanobot
 
-基于nanobot.channels.base.BaseChannel实现的COM聊天室通道。
-使用paramiko-expect进行交互式SSH连接，pyte解析ncurses输出。
-
-消息流向：
-- COM消息 → SDFShellChannel → nanobot Queue → Agent → 飞书
-- 飞书消息 → FeishuChannel → nanobot Queue → Agent → SDFShellChannel → COM
-
-核心依赖：
+架构设计：
 - paramiko-expect: 交互式SSH会话
 - pyte: 终端模拟器，解析ncurses输出
-- nanobot.bus: 消息队列机制
+- asyncio: 统一的异步事件循环
+- 消息队列: 支持nanobot Queue / Redis / 内存队列
+
+消息流向：
+- COM消息 → pyte解析 → Queue → Agent → 飞书
+- 飞书消息 → Queue → Agent翻译 → SSH发送 → COM
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
 import re
+import signal
+import sys
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable, Optional
+import traceback
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import TYPE_CHECKING, Any, Callable, Optional, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Coroutine
+
+# Python版本检查
+if sys.version_info < (3, 10):
+    raise RuntimeError("SDFShell requires Python 3.10+")
 
 # 依赖检查
 try:
@@ -41,29 +50,131 @@ try:
 except ImportError:
     HAS_PYTE = False
 
+try:
+    import redis.asyncio as redis
+    HAS_REDIS = True
+except ImportError:
+    HAS_REDIS = False
+
 # nanobot导入
 try:
     from nanobot.channels.base import BaseChannel
-    from nanobot.bus.queue import Queue
+    from nanobot.bus.queue import Queue as NanobotQueue
     from nanobot.bus.events import Event
     HAS_NANOBOT = True
 except ImportError:
     HAS_NANOBOT = False
-    Queue = None
+    NanobotQueue = None
     Event = None
     class BaseChannel:
-        def __init__(self, config: dict):
-            self.config = config
+        def __init__(self, config: dict): self.config = config
         async def start(self): pass
         async def stop(self): pass
         async def send(self, message: dict): pass
 
-log = logging.getLogger("sdfshell")
+# 日志配置
+def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> logging.Logger:
+    logger = logging.getLogger("sdfshell")
+    logger.setLevel(level)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            "%Y-%m-%d %H:%M:%S"
+        ))
+        logger.addHandler(handler)
+        if log_file:
+            fh = logging.FileHandler(log_file, encoding='utf-8')
+            fh.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+            ))
+            logger.addHandler(fh)
+    return logger
 
+log = setup_logging()
+
+
+# ============== 异常体系 ==============
 
 class SDFShellError(Exception):
-    """SDFShell异常"""
+    """SDFShell基础异常"""
     pass
+
+class SSHError(SDFShellError):
+    """SSH相关异常"""
+    pass
+
+class COMError(SDFShellError):
+    """COM相关异常"""
+    pass
+
+class ConnectionError(SDFShellError):
+    """连接异常"""
+    pass
+
+class QueueError(SDFShellError):
+    """队列异常"""
+    pass
+
+class ParseError(SDFShellError):
+    """解析异常"""
+    pass
+
+
+# ============== 全局异常处理 ==============
+
+def global_exception_handler(exc_type, exc_value, exc_tb):
+    """全局异常处理器"""
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+        return
+    
+    log.critical(f"Unhandled exception: {exc_type.__name__}: {exc_value}")
+    log.debug("".join(traceback.format_exception(exc_type, exc_value, exc_tb)))
+
+sys.excepthook = global_exception_handler
+
+
+def async_exception_handler(loop, context):
+    """异步异常处理器"""
+    exception = context.get("exception")
+    if exception:
+        log.error(f"Async exception: {type(exception).__name__}: {exception}")
+    else:
+        log.error(f"Async error: {context.get('message', 'Unknown error')}")
+
+# 设置异步异常处理器
+try:
+    asyncio.get_event_loop().set_exception_handler(async_exception_handler)
+except:
+    pass
+
+
+# ============== 工具函数 ==============
+
+T = TypeVar('T')
+
+def retry(max_retries: int = 3, delay: float = 1.0, backoff: float = 2.0):
+    """重试装饰器"""
+    def decorator(func: Callable[..., Coroutine[Any, Any, T]]) -> Callable[..., Coroutine[Any, Any, T]]:
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs) -> T:
+            last_exception = None
+            current_delay = delay
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        log.warning(f"Retry {attempt + 1}/{max_retries} after {current_delay}s: {e}")
+                        await asyncio.sleep(current_delay)
+                        current_delay *= backoff
+            
+            raise last_exception
+        return wrapper
+    return decorator
 
 
 def strip_ansi(text: str) -> str:
@@ -73,11 +184,134 @@ def strip_ansi(text: str) -> str:
 
 
 def clean_text(text: str) -> str:
-    """清理文本，只保留可读内容"""
+    """清理文本"""
     text = strip_ansi(text)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     return ' '.join(text.split()).strip()
 
+
+# ============== 消息队列抽象 ==============
+
+class MessageQueue(ABC):
+    """消息队列抽象基类"""
+    
+    @abstractmethod
+    async def publish(self, channel: str, message: dict) -> None:
+        """发布消息"""
+        pass
+    
+    @abstractmethod
+    async def subscribe(self, channel: str) -> AsyncGenerator[dict, None]:
+        """订阅消息"""
+        pass
+    
+    @abstractmethod
+    async def close(self) -> None:
+        """关闭队列"""
+        pass
+
+
+class MemoryQueue(MessageQueue):
+    """内存消息队列"""
+    
+    def __init__(self, maxsize: int = 1000):
+        self._queues: dict[str, asyncio.Queue] = {}
+        self._maxsize = maxsize
+        self._lock = asyncio.Lock()
+    
+    async def _get_queue(self, channel: str) -> asyncio.Queue:
+        async with self._lock:
+            if channel not in self._queues:
+                self._queues[channel] = asyncio.Queue(maxsize=self._maxsize)
+            return self._queues[channel]
+    
+    async def publish(self, channel: str, message: dict) -> None:
+        queue = await self._get_queue(channel)
+        try:
+            queue.put_nowait(message)
+        except asyncio.QueueFull:
+            log.warning(f"Queue {channel} is full, dropping message")
+    
+    async def subscribe(self, channel: str) -> AsyncGenerator[dict, None]:
+        queue = await self._get_queue(channel)
+        while True:
+            message = await queue.get()
+            yield message
+    
+    async def close(self) -> None:
+        self._queues.clear()
+
+
+class RedisQueue(MessageQueue):
+    """Redis消息队列"""
+    
+    def __init__(self, url: str = "redis://localhost:6379/0"):
+        if not HAS_REDIS:
+            raise QueueError("redis not installed: pip install redis")
+        self._url = url
+        self._client: Optional[redis.Redis] = None
+    
+    async def _get_client(self) -> redis.Redis:
+        if self._client is None:
+            self._client = redis.from_url(self._url)
+        return self._client
+    
+    async def publish(self, channel: str, message: dict) -> None:
+        import json
+        client = await self._get_client()
+        await client.publish(f"sdfshell:{channel}", json.dumps(message))
+    
+    async def subscribe(self, channel: str) -> AsyncGenerator[dict, None]:
+        import json
+        client = await self._get_client()
+        pubsub = client.pubsub()
+        await pubsub.subscribe(f"sdfshell:{channel}")
+        
+        async for message in pubsub.listen():
+            if message["type"] == "message":
+                try:
+                    yield json.loads(message["data"])
+                except json.JSONDecodeError:
+                    continue
+    
+    async def close(self) -> None:
+        if self._client:
+            await self._client.close()
+
+
+class NanobotQueueAdapter(MessageQueue):
+    """nanobot队列适配器"""
+    
+    def __init__(self):
+        if not HAS_NANOBOT or NanobotQueue is None:
+            raise QueueError("nanobot not available")
+        self._queue = NanobotQueue()
+    
+    async def publish(self, channel: str, message: dict) -> None:
+        if Event:
+            event = Event(type="message", channel=channel, data=message)
+            await self._queue.publish(event)
+    
+    async def subscribe(self, channel: str) -> AsyncGenerator[dict, None]:
+        async for event in self._queue.subscribe():
+            if hasattr(event, 'channel') and event.channel == channel:
+                yield event.data if hasattr(event, 'data') else {}
+    
+    async def close(self) -> None:
+        pass
+
+
+def create_queue(queue_type: str = "memory", **kwargs) -> MessageQueue:
+    """创建消息队列"""
+    if queue_type == "redis":
+        return RedisQueue(**kwargs)
+    elif queue_type == "nanobot" and HAS_NANOBOT:
+        return NanobotQueueAdapter()
+    else:
+        return MemoryQueue(**kwargs)
+
+
+# ============== 终端模拟器 ==============
 
 class TerminalEmulator:
     """pyte终端模拟器 - 解析ncurses输出"""
@@ -87,11 +321,17 @@ class TerminalEmulator:
             raise SDFShellError("pyte not installed: pip install pyte")
         self.cols = cols
         self.rows = rows
-        self.screen = pyte.Screen(cols, rows)
+        self._reset_screen()
+    
+    def _reset_screen(self) -> None:
+        self.screen = pyte.Screen(self.cols, self.rows)
         self.stream = pyte.Stream(self.screen)
     
     def feed(self, data: str) -> None:
-        self.stream.feed(data)
+        try:
+            self.stream.feed(data)
+        except Exception as e:
+            log.error(f"Terminal feed error: {e}")
     
     def get_display(self) -> str:
         lines = [clean_text(line) for line in self.screen.display]
@@ -100,8 +340,11 @@ class TerminalEmulator:
     def get_messages(self) -> list[str]:
         """提取用户聊天消息"""
         messages = []
-        system_keywords = {'welcome', 'connected', 'disconnected', 'system', 'server', 'online'}
-        system_users = {'system', 'server', 'bot', 'admin'}
+        system_keywords = frozenset([
+            'welcome', 'connected', 'disconnected', 'system', 'server',
+            'online', 'users', 'status', 'help', 'error', 'warning'
+        ])
+        system_users = frozenset(['system', 'server', 'bot', 'admin', 'root'])
         
         for line in self.screen.display:
             line = clean_text(line)
@@ -112,69 +355,84 @@ class TerminalEmulator:
             if any(kw in line_lower for kw in system_keywords):
                 continue
             
-            match = re.match(r'^[<\[]?(\w+)[>\]:]\s*(.+)$', line)
-            if match:
-                user, msg = match.group(1).strip(), match.group(2).strip()
-                if msg and user.lower() not in system_users:
-                    messages.append(f"{user}: {msg}")
+            # 匹配多种消息格式
+            patterns = [
+                r'^[<\[]?(\w+)[>\]:]\s*(.+)$',  # user: msg 或 <user> msg
+                r'^(\w+)\s*>\s*(.+)$',           # user > msg
+                r'^\[(\w+)\]\s*(.+)$',           # [user] msg
+            ]
+            
+            for pattern in patterns:
+                match = re.match(pattern, line)
+                if match:
+                    user, msg = match.group(1).strip(), match.group(2).strip()
+                    if msg and user.lower() not in system_users:
+                        messages.append(f"{user}: {msg}")
+                    break
         
         return messages
     
     def reset(self) -> None:
-        self.screen = pyte.Screen(self.cols, self.rows)
-        self.stream = pyte.Stream(self.screen)
+        self._reset_screen()
 
+
+# ============== SSH会话 ==============
 
 class SSHSession:
-    """paramiko-expect SSH会话管理"""
+    """paramiko-expect SSH会话管理 - 支持重连"""
     
-    _instance = None
-    _lock = threading.Lock()
-    
-    def __new__(cls):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-    
-    def __init__(self):
-        if self._initialized:
-            return
-        self._initialized = True
-        
+    def __init__(self, reconnect_attempts: int = 3, reconnect_delay: float = 5.0):
         if not HAS_PARAMIKO_EXPECT:
-            raise SDFShellError("paramiko-expect not installed: pip install paramiko-expect")
+            raise SSHError("paramiko-expect not installed: pip install paramiko-expect")
         
         self.client: Optional[paramiko.SSHClient] = None
         self.interact: Optional[SSHClientInteraction] = None
         self.terminal: Optional[TerminalEmulator] = None
+        
         self._connected = False
-        self._op_lock = threading.Lock()
+        self._lock = asyncio.Lock()
+        self._reconnect_attempts = reconnect_attempts
+        self._reconnect_delay = reconnect_delay
+        
+        # 连接参数（用于重连）
+        self._host: str = ""
+        self._port: int = 22
+        self._username: str = ""
+        self._password: str = ""
     
     @property
     def connected(self) -> bool:
-        return self._connected and self.client is not None
+        if not self._connected or self.client is None:
+            return False
+        try:
+            transport = self.client.get_transport()
+            return transport is not None and transport.is_active()
+        except:
+            return False
     
-    def connect(self, host: str, username: str, password: str, port: int = 22) -> str:
-        """使用paramiko-expect连接SSH"""
-        with self._op_lock:
+    async def connect(self, host: str, username: str, password: str, port: int = 22) -> str:
+        """连接SSH服务器"""
+        async with self._lock:
             try:
-                if self.connected:
-                    return f"Already connected to {self.client.get_transport().getpeername()[0]}"
+                # 保存连接参数
+                self._host, self._port = host, port
+                self._username, self._password = username, password
                 
                 self.client = paramiko.SSHClient()
                 self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-                self.client.connect(
-                    hostname=host,
-                    port=port,
-                    username=username,
-                    password=password,
-                    timeout=30,
-                    banner_timeout=30,
-                    look_for_keys=False,
-                    allow_agent=False
+                
+                await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: self.client.connect(
+                        hostname=host,
+                        port=port,
+                        username=username,
+                        password=password,
+                        timeout=30,
+                        banner_timeout=30,
+                        look_for_keys=False,
+                        allow_agent=False
+                    )
                 )
                 
                 self.interact = SSHClientInteraction(self.client, timeout=60, display=False)
@@ -185,13 +443,35 @@ class SSHSession:
                 return f"Connected to {host}:{port}"
                 
             except Exception as e:
+                self._connected = False
                 log.error(f"SSH connection failed: {e}")
-                raise SDFShellError(f"Connection failed: {e}") from e
+                raise SSHError(f"Connection failed: {e}") from e
     
-    def disconnect(self) -> str:
+    async def reconnect(self) -> str:
+        """重新连接"""
+        if not self._host:
+            raise SSHError("No previous connection to reconnect")
+        
+        log.info(f"Attempting to reconnect to {self._host}...")
+        
+        for attempt in range(self._reconnect_attempts):
+            try:
+                await self.disconnect()
+                await asyncio.sleep(self._reconnect_delay)
+                result = await self.connect(
+                    self._host, self._username, self._password, self._port
+                )
+                log.info(f"Reconnected successfully on attempt {attempt + 1}")
+                return result
+            except Exception as e:
+                log.warning(f"Reconnect attempt {attempt + 1} failed: {e}")
+        
+        raise SSHError(f"Failed to reconnect after {self._reconnect_attempts} attempts")
+    
+    async def disconnect(self) -> str:
         """断开连接"""
-        with self._op_lock:
-            if not self.connected:
+        async with self._lock:
+            if not self._connected:
                 return "Not connected"
             
             try:
@@ -206,17 +486,28 @@ class SSHSession:
                 
             except Exception as e:
                 log.error(f"Disconnect error: {e}")
-                raise SDFShellError(f"Disconnect failed: {e}") from e
+                raise SSHError(f"Disconnect failed: {e}") from e
     
-    def send_command(self, command: str, expect: str = "$", timeout: float = 5.0) -> str:
-        """使用paramiko-expect发送命令"""
-        with self._op_lock:
-            if not self.connected or not self.interact:
-                raise SDFShellError("Not connected")
-            
+    async def ensure_connected(self) -> None:
+        """确保连接状态"""
+        if not self.connected:
+            await self.reconnect()
+    
+    async def send_command(self, command: str, expect: str = "$", timeout: float = 5.0) -> str:
+        """发送命令"""
+        await self.ensure_connected()
+        
+        async with self._lock:
             try:
-                self.interact.send(command)
-                self.interact.expect(expect, timeout=timeout)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.interact.send(command)
+                )
+                await loop.run_in_executor(
+                    None,
+                    lambda: self.interact.expect(expect, timeout=timeout)
+                )
                 
                 output = self.interact.current_output
                 if self.terminal and output:
@@ -227,17 +518,20 @@ class SSHSession:
                 
             except Exception as e:
                 log.error(f"Send command error: {e}")
-                raise SDFShellError(f"Command failed: {e}") from e
+                if "not open" in str(e).lower() or "closed" in str(e).lower():
+                    self._connected = False
+                    await self.reconnect()
+                    return await self.send_command(command, expect, timeout)
+                raise SSHError(f"Command failed: {e}") from e
     
-    def send_and_read(self, command: str, wait: float = 1.0) -> tuple[str, list[str]]:
+    async def send_and_read(self, command: str, wait: float = 1.0) -> tuple[str, list[str]]:
         """发送命令并读取消息"""
-        with self._op_lock:
-            if not self.connected or not self.interact:
-                raise SDFShellError("Not connected")
-            
+        await self.ensure_connected()
+        
+        async with self._lock:
             try:
                 self.interact.send(command)
-                time.sleep(wait)
+                await asyncio.sleep(wait)
                 
                 output = ""
                 while self.interact.channel.recv_ready():
@@ -251,45 +545,37 @@ class SSHSession:
                 
             except Exception as e:
                 log.error(f"Send and read error: {e}")
-                raise SDFShellError(f"Read failed: {e}") from e
+                if "not open" in str(e).lower() or "closed" in str(e).lower():
+                    self._connected = False
+                    await self.reconnect()
+                    return await self.send_and_read(command, wait)
+                raise SSHError(f"Read failed: {e}") from e
 
+
+# ============== COM会话 ==============
 
 class COMSession:
     """COM聊天室会话"""
     
-    _instance = None
-    _lock = threading.Lock()
-    
-    def __new__(cls, ssh: SSHSession = None):
-        if cls._instance is None:
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
-                    cls._instance._initialized = False
-        return cls._instance
-    
-    def __init__(self, ssh: SSHSession = None):
-        if self._initialized:
-            return
-        self._initialized = True
-        
-        self.ssh = ssh or SSHSession()
+    def __init__(self, ssh: SSHSession):
+        self.ssh = ssh
         self._in_com = False
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_task: Optional[asyncio.Task] = None
         self._monitoring = False
         self._message_callback: Optional[Callable[[list[str]], None]] = None
+        self._monitor_interval = 3.0
     
     @property
     def in_com(self) -> bool:
         return self._in_com
     
-    def login(self) -> str:
-        """登录COM聊天室"""
+    async def login(self) -> str:
+        """登录COM"""
         if not self.ssh.connected:
-            raise SDFShellError("SSH not connected")
+            raise COMError("SSH not connected")
         
         try:
-            display, _ = self.ssh.send_and_read("com", wait=2.0)
+            display, _ = await self.ssh.send_and_read("com", wait=2.0)
             
             if ">" in display or "COM" in display.upper():
                 self._in_com = True
@@ -300,9 +586,9 @@ class COMSession:
             
         except Exception as e:
             log.error(f"COM login error: {e}")
-            raise SDFShellError(f"Login failed: {e}") from e
+            raise COMError(f"Login failed: {e}") from e
     
-    def logout(self) -> str:
+    async def logout(self) -> str:
         """退出COM"""
         if not self._in_com:
             return "Not in COM"
@@ -310,79 +596,84 @@ class COMSession:
         self._monitoring = False
         
         try:
-            self.ssh.send_command("/q", expect="$", timeout=2.0)
+            await self.ssh.send_command("/q", expect="$", timeout=2.0)
             self._in_com = False
             log.info("COM logged out")
             return "Logged out of COM"
             
         except Exception as e:
             log.error(f"COM logout error: {e}")
-            raise SDFShellError(f"Logout failed: {e}") from e
+            raise COMError(f"Logout failed: {e}") from e
     
-    def send_message(self, message: str) -> str:
-        """发送消息到COM"""
+    async def send_message(self, message: str) -> str:
+        """发送消息"""
         if not self._in_com:
-            raise SDFShellError("Not in COM")
+            raise COMError("Not in COM")
         
         try:
-            self.ssh.send_and_read(message, wait=0.5)
+            await self.ssh.send_and_read(message, wait=0.5)
             log.info(f"Message sent: {message[:50]}...")
             return f"Sent: {message}"
             
         except Exception as e:
             log.error(f"Send message error: {e}")
-            raise SDFShellError(f"Send failed: {e}") from e
+            raise COMError(f"Send failed: {e}") from e
     
-    def read_messages(self, count: int = 10) -> list[str]:
-        """读取COM消息"""
+    async def read_messages(self, count: int = 10) -> list[str]:
+        """读取消息"""
         if not self._in_com:
-            raise SDFShellError("Not in COM")
+            raise COMError("Not in COM")
         
         try:
-            _, messages = self.ssh.send_and_read("", wait=0.5)
+            _, messages = await self.ssh.send_and_read("", wait=0.5)
             return messages[-count:] if messages else []
             
         except Exception as e:
             log.error(f"Read messages error: {e}")
-            raise SDFShellError(f"Read failed: {e}") from e
+            raise COMError(f"Read failed: {e}") from e
     
-    def start_monitor(self, callback: Callable[[list[str]], None], interval: float = 3.0) -> str:
+    async def start_monitor(self, callback: Callable[[list[str]], None], interval: float = 3.0) -> str:
         """启动消息监控"""
         if self._monitoring:
             return "Already monitoring"
         
         self._message_callback = callback
+        self._monitor_interval = interval
         self._monitoring = True
         
-        def _monitor_loop():
+        async def _monitor_loop():
             while self._monitoring and self._in_com:
                 try:
-                    messages = self.read_messages(count=5)
+                    messages = await self.read_messages(count=5)
                     if messages and self._message_callback:
                         self._message_callback(messages)
                 except Exception as e:
                     log.error(f"Monitor error: {e}")
-                time.sleep(interval)
+                await asyncio.sleep(self._monitor_interval)
         
-        self._monitor_thread = threading.Thread(target=_monitor_loop, daemon=True)
-        self._monitor_thread.start()
+        self._monitor_task = asyncio.create_task(_monitor_loop())
         log.info("Message monitor started")
         return "Monitor started"
     
-    def stop_monitor(self) -> str:
+    async def stop_monitor(self) -> str:
         """停止监控"""
         self._monitoring = False
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            try:
+                await self._monitor_task
+            except asyncio.CancelledError:
+                pass
         log.info("Message monitor stopped")
         return "Monitor stopped"
 
 
+# ============== SDFShell Channel ==============
+
 class SDFShellChannel(BaseChannel):
     """SDFShell nanobot通道
     
-    继承nanobot.channels.base.BaseChannel，实现COM聊天室消息收发。
-    使用nanobot.bus.Queue进行消息传递，确保可靠性。
-    
-    配置示例 (config.yaml):
+    配置示例:
         channels:
           sdfshell:
             enabled: true
@@ -391,57 +682,67 @@ class SDFShellChannel(BaseChannel):
             username: your_username
             password: your_password
             monitor_interval: 3.0
-    
-    消息流向：
-        COM消息 → pyte解析 → Queue → Agent → 飞书
-        飞书消息 → Queue → Agent翻译 → SSH发送 → COM
+            queue_type: memory  # memory / redis / nanobot
+            redis_url: redis://localhost:6379/0
+            reconnect_attempts: 3
     """
     
     def __init__(self, config: dict):
         super().__init__(config)
         
-        # 从配置或环境变量读取
+        # 连接配置
         self.host = config.get("host") or os.environ.get("SDF_HOST", "sdf.org")
         self.port = config.get("port") or int(os.environ.get("SDF_PORT", "22"))
         self.username = config.get("username") or os.environ.get("SDF_USERNAME", "")
         self.password = config.get("password") or os.environ.get("SDF_PASSWORD", "")
         self.monitor_interval = config.get("monitor_interval", 3.0)
         
-        self._ssh = SSHSession()
-        self._com = COMSession(self._ssh)
+        # 队列配置
+        self.queue_type = config.get("queue_type", "memory")
+        self.redis_url = config.get("redis_url", "redis://localhost:6379/0")
         
-        # 使用nanobot消息队列（如果可用）
-        if HAS_NANOBOT and Queue:
-            self._queue = Queue()
-            self._use_nanobot_queue = True
-            log.info("Using nanobot bus queue")
-        else:
-            # 回退到内存队列
-            self._message_queue: list[dict] = []
-            self._queue_lock = threading.Lock()
-            self._use_nanobot_queue = False
-            log.warning("nanobot queue not available, using memory queue")
+        # 重连配置
+        self.reconnect_attempts = config.get("reconnect_attempts", 3)
+        
+        # 组件
+        self._ssh = SSHSession(reconnect_attempts=self.reconnect_attempts)
+        self._com = COMSession(self._ssh)
+        self._queue: Optional[MessageQueue] = None
         
         self._running = False
+        self._channel_name = "sdfshell"
     
     async def start(self) -> None:
         """启动通道"""
         log.info(f"Starting SDFShell channel: {self.host}")
         
-        if not self.username or not self.password:
-            log.warning("Username/password not configured. Use ssh_connect to connect manually.")
-            return
+        # 创建消息队列
+        try:
+            if self.queue_type == "redis":
+                self._queue = RedisQueue(self.redis_url)
+            elif self.queue_type == "nanobot" and HAS_NANOBOT:
+                self._queue = NanobotQueueAdapter()
+            else:
+                self._queue = MemoryQueue()
+            log.info(f"Using {self.queue_type} queue")
+        except Exception as e:
+            log.warning(f"Failed to create {self.queue_type} queue, falling back to memory: {e}")
+            self._queue = MemoryQueue()
         
-        self._ssh.connect(self.host, self.username, self.password, self.port)
-        self._com.login()
+        # 连接SSH
+        if self.username and self.password:
+            await self._ssh.connect(self.host, self.username, self.password, self.port)
+            await self._com.login()
+            
+            # 启动消息监控
+            await self._com.start_monitor(
+                callback=self._on_com_message,
+                interval=self.monitor_interval
+            )
+        else:
+            log.warning("Username/password not configured. Use ssh_connect to connect manually.")
         
         self._running = True
-        
-        self._com.start_monitor(
-            callback=self._on_com_message,
-            interval=self.monitor_interval
-        )
-        
         log.info("SDFShell channel started")
     
     async def stop(self) -> None:
@@ -449,69 +750,37 @@ class SDFShellChannel(BaseChannel):
         log.info("Stopping SDFShell channel")
         
         self._running = False
-        self._com.stop_monitor()
-        self._com.logout()
-        self._ssh.disconnect()
+        
+        await self._com.stop_monitor()
+        await self._com.logout()
+        await self._ssh.disconnect()
+        
+        if self._queue:
+            await self._queue.close()
         
         log.info("SDFShell channel stopped")
     
     def _on_com_message(self, messages: list[str]) -> None:
-        """处理COM消息回调 - 放入队列（反向通道：COM → nanobot）"""
+        """处理COM消息回调"""
         for msg in messages:
-            if self._use_nanobot_queue and Event:
-                # 使用nanobot消息队列
-                event = Event(
-                    type="message",
-                    channel="sdfshell",
-                    data={"content": msg, "timestamp": time.time()}
-                )
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        asyncio.create_task(self._queue.publish(event))
-                    else:
-                        loop.run_until_complete(self._queue.publish(event))
-                except:
-                    pass
-            else:
-                # 内存队列回退
-                event = {
-                    "type": "message",
-                    "channel": "sdfshell",
-                    "content": msg,
-                    "timestamp": time.time()
-                }
-                with self._queue_lock:
-                    self._message_queue.append(event)
-            
+            asyncio.create_task(self._queue.publish(self._channel_name, {
+                "type": "message",
+                "channel": self._channel_name,
+                "content": msg,
+                "timestamp": time.time()
+            }))
             log.debug(f"COM message queued: {msg[:50]}...")
     
     async def receive(self) -> AsyncGenerator[dict, None]:
-        """接收消息（nanobot调用）- 反向通道入口"""
-        if self._use_nanobot_queue:
-            async for event in self._queue.subscribe():
-                if not self._running:
-                    break
-                yield {
-                    "type": event.type,
-                    "channel": getattr(event, 'channel', 'sdfshell'),
-                    "content": event.data.get("content", "") if hasattr(event, 'data') else "",
-                    "timestamp": event.data.get("timestamp", time.time()) if hasattr(event, 'data') else time.time()
-                }
-        else:
-            while self._running:
-                with self._queue_lock:
-                    if self._message_queue:
-                        event = self._message_queue.pop(0)
-                        yield event
-                        continue
-                
-                await asyncio.sleep(0.1)
+        """接收消息（nanobot调用）"""
+        async for message in self._queue.subscribe(self._channel_name):
+            if not self._running:
+                break
+            yield message
     
     async def send(self, message: dict) -> None:
-        """发送消息（nanobot调用）- 正向通道：nanobot → COM"""
+        """发送消息（nanobot调用）"""
         content = message.get("content", "")
-        
         if not content:
             return
         
@@ -520,7 +789,7 @@ class SDFShellChannel(BaseChannel):
             return
         
         try:
-            self._com.send_message(content)
+            await self._com.send_message(content)
             log.info(f"Message sent to COM: {content[:50]}...")
         except Exception as e:
             log.error(f"Failed to send message: {e}")
@@ -530,7 +799,8 @@ class SDFShellChannel(BaseChannel):
         return self._ssh.connected and self._com.in_com
 
 
-# 全局单例
+# ============== 全局实例 ==============
+
 _ssh_session: Optional[SSHSession] = None
 _com_session: Optional[COMSession] = None
 _sessions_lock = threading.Lock()
@@ -547,126 +817,108 @@ def _get_sessions() -> tuple[SSHSession, COMSession]:
         return _ssh_session, _com_session
 
 
-# nanobot skill工具函数
+# ============== nanobot工具函数 ==============
+
 def ssh_connect(host: str, username: str, password: str, port: int = 22) -> str:
-    """使用paramiko-expect连接SSH服务器
-    
-    Args:
-        host: SSH服务器地址，如 sdf.org
-        username: 用户名
-        password: 密码
-        port: 端口号，默认22
-    
-    Returns:
-        连接结果信息
-    """
+    """连接SSH服务器"""
     try:
         ssh, _ = _get_sessions()
-        return ssh.connect(host, username, password, port)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(ssh.connect(host, username, password, port))
+        loop.close()
+        return result
     except Exception as e:
         return f"Error: {e}"
 
 
 def com_login() -> str:
-    """登录SDF.org COM聊天室
-    
-    需要先通过ssh_connect连接到服务器。
-    
-    Returns:
-        登录结果
-    """
+    """登录COM"""
     try:
         _, com = _get_sessions()
-        return com.login()
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(com.login())
+        loop.close()
+        return result
     except Exception as e:
         return f"Error: {e}"
 
 
 def com_send(message: str) -> str:
-    """发送消息到COM聊天室
-    
-    Args:
-        message: 消息内容
-    
-    Returns:
-        发送结果
-    """
+    """发送消息"""
     try:
         _, com = _get_sessions()
-        return com.send_message(message)
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(com.send_message(message))
+        loop.close()
+        return result
     except Exception as e:
         return f"Error: {e}"
 
 
 def com_read(count: int = 10) -> str:
-    """读取COM聊天室消息
-    
-    Args:
-        count: 读取消息数量，默认10
-    
-    Returns:
-        消息列表
-    """
+    """读取消息"""
     try:
         _, com = _get_sessions()
-        messages = com.read_messages(count)
+        loop = asyncio.new_event_loop()
+        messages = loop.run_until_complete(com.read_messages(count))
+        loop.close()
         return '\n'.join(f"- {m}" for m in messages) if messages else "No messages"
     except Exception as e:
         return f"Error: {e}"
 
 
 def com_logout() -> str:
-    """退出COM聊天室
-    
-    Returns:
-        退出结果
-    """
+    """退出COM"""
     try:
         _, com = _get_sessions()
-        return com.logout()
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(com.logout())
+        loop.close()
+        return result
     except Exception as e:
         return f"Error: {e}"
 
 
 def ssh_disconnect() -> str:
-    """断开SSH连接
-    
-    Returns:
-        断开结果
-    """
+    """断开SSH"""
     try:
         ssh, com = _get_sessions()
+        loop = asyncio.new_event_loop()
         if com.in_com:
-            com.logout()
-        return ssh.disconnect()
+            loop.run_until_complete(com.logout())
+        result = loop.run_until_complete(ssh.disconnect())
+        loop.close()
+        return result
     except Exception as e:
         return f"Error: {e}"
 
 
-# nanobot工具定义
+# ============== TOOLS定义 ==============
+
 TOOLS = [
     {
         "name": "ssh_connect",
-        "description": "使用paramiko-expect连接SSH服务器。用于连接到SDF.org或其他SSH服务器。",
+        "description": "连接SSH服务器",
         "parameters": {
             "type": "object",
             "properties": {
-                "host": {"type": "string", "description": "SSH服务器地址，如 sdf.org"},
+                "host": {"type": "string", "description": "主机地址"},
                 "username": {"type": "string", "description": "用户名"},
                 "password": {"type": "string", "description": "密码"},
-                "port": {"type": "integer", "description": "端口号，默认22", "default": 22}
+                "port": {"type": "integer", "description": "端口", "default": 22}
             },
             "required": ["host", "username", "password"]
         }
     },
     {
         "name": "com_login",
-        "description": "登录SDF.org COM聊天室。需要先通过ssh_connect连接到服务器。",
+        "description": "登录COM聊天室",
         "parameters": {"type": "object", "properties": {}}
     },
     {
         "name": "com_send",
-        "description": "发送消息到COM聊天室。需要先通过com_login登录。",
+        "description": "发送消息到COM",
         "parameters": {
             "type": "object",
             "properties": {"message": {"type": "string", "description": "消息内容"}},
@@ -675,31 +927,34 @@ TOOLS = [
     },
     {
         "name": "com_read",
-        "description": "读取COM聊天室消息。返回最新的聊天消息。",
+        "description": "读取COM消息",
         "parameters": {
             "type": "object",
-            "properties": {"count": {"type": "integer", "description": "读取数量，默认10", "default": 10}}
+            "properties": {"count": {"type": "integer", "description": "数量", "default": 10}}
         }
     },
     {
         "name": "com_logout",
-        "description": "退出COM聊天室。",
+        "description": "退出COM",
         "parameters": {"type": "object", "properties": {}}
     },
     {
         "name": "ssh_disconnect",
-        "description": "断开SSH连接。会自动退出COM聊天室。",
+        "description": "断开SSH连接",
         "parameters": {"type": "object", "properties": {}}
     }
 ]
 
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __all__ = [
     "SDFShellChannel",
     "SSHSession",
     "COMSession",
     "TerminalEmulator",
+    "MessageQueue",
+    "MemoryQueue",
+    "RedisQueue",
     "SDFShellError",
     "ssh_connect",
     "com_login",
@@ -712,7 +967,8 @@ __all__ = [
 
 
 if __name__ == "__main__":
-    print("SDFShell - SDF.org COM Chat Channel for nanobot")
+    print("SDFShell v2.0.0 - SDF.org COM Chat Channel for nanobot")
     print(f"paramiko-expect: {HAS_PARAMIKO_EXPECT}")
     print(f"pyte: {HAS_PYTE}")
+    print(f"redis: {HAS_REDIS}")
     print(f"nanobot: {HAS_NANOBOT}")
