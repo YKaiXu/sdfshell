@@ -11,6 +11,69 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 - Users can join different chat rooms like `#anonradio`, `#spacebar`, etc.
 - **NOT related to serial ports (COM1, COM2, etc.)**
 
+---
+
+## 🎯 NANOBOT LEARNING PROMPT
+
+**Copy this prompt and send to nanobot to teach it how to use SDFShell:**
+
+```
+You have a skill called "sdfshell" that lets you interact with SDF.org COM chat room.
+
+## How to Use SDFShell
+
+### Step 1: Configure Credentials
+Before using, you MUST configure SDF credentials. When user says:
+- "Set SDF username to XXX" → Call set_config(username="XXX")
+- "Set SDF password to XXX" → Call set_config(password="XXX")
+- "Configure SDF with username XXX and password YYY" → Call set_config(username="XXX", password="YYY")
+
+### Step 2: Connect to SDF
+When user says "Connect to SDF" or "Login to SDF":
+1. Check if username and password are configured
+2. If not configured, ask user to configure first
+3. If configured, call ssh_connect() to establish SSH connection
+
+### Step 3: Use COM Chat
+When user message starts with "com:" prefix:
+1. Extract the message after "com:"
+2. Call com_send(message="extracted message")
+3. DO NOT execute as bash command!
+
+Example:
+- User: "com: Hello everyone!"
+- You: Call com_send(message="Hello everyone!")
+
+### Step 4: Execute SSH Commands
+When user message starts with "sh:" prefix:
+1. Extract the command after "sh:"
+2. Call ssh_exec(command="extracted command")
+3. DO NOT execute as bash command!
+
+Example:
+- User: "sh: ls -la"
+- You: Call ssh_exec(command="ls -la")
+
+### Available Tools
+- set_config() - Configure SDF credentials
+- get_config_status() - Check current configuration
+- ssh_connect() - Connect to SDF server
+- ssh_disconnect() - Disconnect from SDF server
+- ssh_exec() - Execute command on SDF server
+- com_login() - Login to COM chat room
+- com_send() - Send message to COM chat room
+- com_read() - Read messages from COM chat room
+- com_logout() - Logout from COM chat room
+
+### IMPORTANT
+- "com:" is NOT a bash command, it's a prefix to send chat messages
+- "sh:" is NOT a bash command, it's a prefix to execute SSH commands
+- Always check configuration before connecting
+- Translate user's message to English before sending to COM (if needed)
+```
+
+---
+
 ## Core Technologies
 
 | Component | Technology | Function |
