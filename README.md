@@ -1,66 +1,50 @@
 # SDFShell - SDF.org COM Chat Channel for nanobot
 
-SDF.org COM聊天室的nanobot通道，实现双向消息传递。
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-## 核心技术
+SDF.org COM chat room nanobot channel for bidirectional message passing with auto-translation support.
 
-| 组件 | 技术 | 作用 |
-|------|------|------|
-| SSH连接 | paramiko-expect | 交互式SSH会话，自动密码输入 |
-| 终端解析 | pyte | 解析ncurses输出，提取聊天消息 |
-| 消息队列 | nanobot.bus.Queue | 可靠的消息传递机制 |
+## Features
 
-## 架构
+- **paramiko-expect** - Interactive SSH session with auto password input
+- **pyte** - Terminal emulator for parsing ncurses output
+- **nanobot Queue** - Reliable message passing mechanism
+- **Auto-reconnect** - Automatic SSH reconnection on disconnect
+- **Bidirectional Translation** - Auto-translate messages between languages
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    nanobot Agent                            │
-│                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ FeishuChannel│  │SDFShellChannel│  │ OtherChannel │      │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────┘      │
-│         │                 │                                 │
-│         ▼                 ▼                                 │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │              nanobot.bus.Queue                       │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                           │                                 │
-│                           ▼                                 │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │              Agent + LLM (消息处理+翻译)               │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   SDFShell Channel                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐         │
-│  │ SSHSession  │  │ COMSession  │  │ TerminalEmu │         │
-│  │(paramiko-   │  │             │  │ (pyte)      │         │
-│  │ expect)     │  │             │  │             │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘         │
-└─────────────────────────────────────────────────────────────┘
-```
+## One-Click Install
 
-## 消息流向
+**Copy this command and send to nanobot:**
 
 ```
-【COM → 飞书】
-COM聊天室 → pyte解析 → Queue → Agent(LLM翻译) → 飞书
-
-【飞书 → COM】
-飞书消息 → Queue → Agent(LLM翻译) → SSH发送 → COM
+请在bash执行: curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | bash
 ```
 
-## 安装
+After execution, nanobot will:
+- ✅ Auto-install SDFShell with virtual environment
+- ✅ Learn all `com:` and `sh:` prefix rules
+- ✅ Master all COM chat room commands
+- ✅ Master all SDF shell commands
+- ✅ Support bidirectional auto-translation
+
+Or run manually:
 
 ```bash
-pip install sdfshell
+curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | bash
 ```
 
-## 配置
+## Message Routing
 
-在nanobot的`config.yaml`中添加：
+| Prefix | Purpose | Description |
+|--------|---------|-------------|
+| `com:` | Send chat message | Auto-translate to English, send to COM |
+| `sh:` | Execute command | Execute SSH/SDF command (no translation) |
+| No prefix | Normal chat | Chat with nanobot |
+
+## Configuration
+
+Add to `~/.nanobot/config.yaml`:
 
 ```yaml
 channels:
@@ -71,58 +55,64 @@ channels:
     username: your_username
     password: your_password
     monitor_interval: 3.0
+    queue_type: nanobot
+    reconnect_attempts: 3
 ```
 
-## SDF.org COM命令参考
+## COM Commands
 
-| 命令 | 功能 | 示例 |
-|------|------|------|
-| `com` | 进入COM聊天室 | 直接输入 `com` |
-| `/q` | 退出COM | `/q` |
-| `/w` | 查看在线用户 | `/w` |
-| `/h` | 帮助 | `/h` |
-| `/i username` | 忽略用户 | `/i spammer` |
-| `/m username` | 私聊 | `/m john` |
-| 直接输入 | 发送消息 | `Hello everyone!` |
+| Command | Function |
+|---------|----------|
+| `l` | List rooms |
+| `g room` | Go to room |
+| `w` | Who is online |
+| `r` | Review history |
+| `q` | Quit COM |
+| `space + message` | Send message |
 
-## 使用示例
+## Tools
+
+| Tool | Description |
+|------|-------------|
+| `ssh_connect` | Connect to SSH server |
+| `com_login` | Login to COM chat |
+| `com_send` | Send command/message |
+| `com_read` | Read messages |
+| `com_logout` | Logout from COM |
+| `ssh_disconnect` | Disconnect SSH |
+
+## Usage Example
 
 ```
-用户: 连接到sdf.org
-助手: [调用 ssh_connect(host="sdf.org", username="user", password="pass")]
-已连接到sdf.org
+User: Connect to sdf.org, username user, password pass
+Assistant: [ssh_connect("sdf.org", "user", "pass")]
+Connected to sdf.org
 
-用户: 登录COM
-助手: [调用 com_login()]
-已登录COM聊天室
+User: com: Hello everyone
+Assistant: [Translate and send]
+Sent: Hello everyone!
 
-用户: 发送消息"Hello"
-助手: [调用 com_send(message="Hello")]
-消息已发送
-
-用户: 读取消息
-助手: [调用 com_read(count=10)]
-最新消息:
-- user1: Hi
-- user2: Hello
-
-用户: 退出
-助手: [调用 com_logout() 和 ssh_disconnect()]
-已退出
+User: sh: View disk usage
+Assistant: [com_send("disk")]
+Filesystem     Size  Used Avail Use%
+/home/user      10G   2G   8G   20%
 ```
 
-## 依赖
+## Requirements
 
-- Python >= 3.10
+- Python 3.10+
 - paramiko >= 3.0.0
 - paramiko-expect >= 0.3.5
 - pyte >= 0.8.0
-- nanobot >= 0.1.0 (可选)
+- SDF.org account
 
-## 许可证
+## Author
+
+**YUKAIXU**
+- Location: Hubei, China
+- Email: yukaixu@outlook.com
+- GitHub: https://github.com/YKaiXu
+
+## License
 
 MIT License
-
-## 作者
-
-YKaiXu (yukaixu@outlook.com)
