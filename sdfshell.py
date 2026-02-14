@@ -75,23 +75,52 @@ except ImportError:
         async def send(self, message: dict): pass
 
 # Logging configuration / 日志配置
+# Default log file path / 默认日志文件路径
+DEFAULT_LOG_DIR = os.path.expanduser("~/.nanobot/logs")
+DEFAULT_LOG_FILE = os.path.join(DEFAULT_LOG_DIR, "sdfshell.log")
+
 def setup_logging(level: int = logging.INFO, log_file: str | None = None) -> logging.Logger:
-    """Setup logging system / 配置日志系统"""
+    """Setup logging system / 配置日志系统
+    
+    Args:
+        level: Log level / 日志级别
+        log_file: Log file path, default to ~/.nanobot/logs/sdfshell.log
+                  日志文件路径，默认为 ~/.nanobot/logs/sdfshell.log
+    
+    Returns:
+        Configured logger / 配置好的日志器
+    """
     logger = logging.getLogger("sdfshell")
     logger.setLevel(level)
+    
     if not logger.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(
+        # Console handler / 控制台处理器
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter(
             "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
             "%Y-%m-%d %H:%M:%S"
         ))
-        logger.addHandler(handler)
-        if log_file:
-            fh = logging.FileHandler(log_file, encoding='utf-8')
-            fh.setFormatter(logging.Formatter(
-                "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        logger.addHandler(console_handler)
+        
+        # File handler / 文件处理器
+        if log_file is None:
+            log_file = DEFAULT_LOG_FILE
+        
+        try:
+            # Ensure log directory exists / 确保日志目录存在
+            log_dir = os.path.dirname(log_file)
+            if log_dir and not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+            
+            file_handler = logging.FileHandler(log_file, encoding='utf-8')
+            file_handler.setFormatter(logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s [%(filename)s:%(lineno)d]: %(message)s"
             ))
-            logger.addHandler(fh)
+            logger.addHandler(file_handler)
+            logger.info(f"Log file: {log_file}")
+        except Exception as e:
+            logger.warning(f"Failed to create log file: {e}")
+    
     return logger
 
 log = setup_logging()
@@ -146,11 +175,15 @@ def async_exception_handler(loop, context):
     else:
         log.error(f"Async error: {context.get('message', 'Unknown error')}")
 
-# 设置异步异常处理器
-try:
-    asyncio.get_event_loop().set_exception_handler(async_exception_handler)
-except:
-    pass
+def _setup_async_exception_handler():
+    """设置异步异常处理器"""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.set_exception_handler(async_exception_handler)
+    except RuntimeError:
+        pass
+
+_setup_async_exception_handler()
 
 
 # ============== 工具函数 ==============
@@ -421,8 +454,12 @@ class SSHSession:
                 self._host, self._port = host, port
                 self._username, self._password = username, password
                 
+                log.info(f"[SSH] Connecting to {host}:{port} as {username}...")
+                
                 self.client = paramiko.SSHClient()
                 self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                
+                log.debug(f"[SSH] Creating SSH connection with timeout=30s")
                 
                 await asyncio.get_event_loop().run_in_executor(
                     None,
@@ -442,12 +479,14 @@ class SSHSession:
                 self.terminal = TerminalEmulator()
                 self._connected = True
                 
-                log.info(f"SSH connected: {host}:{port}")
+                log.info(f"[SSH] ✓ Connected successfully to {host}:{port}")
+                log.debug(f"[SSH] Transport active: {self.client.get_transport().is_active() if self.client.get_transport() else False}")
                 return f"Connected to {host}:{port}"
                 
             except Exception as e:
                 self._connected = False
-                log.error(f"SSH connection failed: {e}")
+                log.error(f"[SSH] ✗ Connection failed: {type(e).__name__}: {e}")
+                log.debug(f"[SSH] Connection parameters: host={host}, port={port}, username={username}")
                 raise SSHError(f"Connection failed: {e}") from e
     
     async def reconnect(self) -> str:
@@ -455,20 +494,23 @@ class SSHSession:
         if not self._host:
             raise SSHError("No previous connection to reconnect")
         
-        log.info(f"Attempting to reconnect to {self._host}...")
+        log.info(f"[SSH] Reconnecting to {self._host}:{self._port}...")
+        log.debug(f"[SSH] Reconnect config: attempts={self._reconnect_attempts}, delay={self._reconnect_delay}s")
         
         for attempt in range(self._reconnect_attempts):
+            log.info(f"[SSH] Reconnect attempt {attempt + 1}/{self._reconnect_attempts}")
             try:
                 await self.disconnect()
                 await asyncio.sleep(self._reconnect_delay)
                 result = await self.connect(
                     self._host, self._username, self._password, self._port
                 )
-                log.info(f"Reconnected successfully on attempt {attempt + 1}")
+                log.info(f"[SSH] ✓ Reconnected successfully on attempt {attempt + 1}")
                 return result
             except Exception as e:
-                log.warning(f"Reconnect attempt {attempt + 1} failed: {e}")
+                log.warning(f"[SSH] ✗ Reconnect attempt {attempt + 1} failed: {type(e).__name__}: {e}")
         
+        log.error(f"[SSH] All {self._reconnect_attempts} reconnection attempts failed")
         raise SSHError(f"Failed to reconnect after {self._reconnect_attempts} attempts")
     
     async def disconnect(self) -> str:
@@ -575,64 +617,77 @@ class COMSession:
     async def login(self) -> str:
         """登录COM"""
         if not self.ssh.connected:
+            log.error("[COM] Cannot login: SSH not connected")
             raise COMError("SSH not connected")
         
         try:
+            log.info("[COM] Logging into COM chat room...")
             display, _ = await self.ssh.send_and_read("com", wait=2.0)
+            
+            log.debug(f"[COM] Login response preview: {display[:200]}...")
             
             if ">" in display or "COM" in display.upper():
                 self._in_com = True
-                log.info("COM logged in")
+                log.info("[COM] ✓ Logged into COM successfully")
                 return f"Logged into COM\n{display}"
             
+            log.warning("[COM] Login status unclear, check response")
             return f"Login may have failed\n{display}"
             
         except Exception as e:
-            log.error(f"COM login error: {e}")
+            log.error(f"[COM] ✗ Login failed: {type(e).__name__}: {e}")
             raise COMError(f"Login failed: {e}") from e
     
     async def logout(self) -> str:
         """退出COM"""
         if not self._in_com:
+            log.debug("[COM] Not in COM, nothing to logout")
             return "Not in COM"
         
+        log.info("[COM] Logging out of COM...")
         self._monitoring = False
         
         try:
             await self.ssh.send_command("/q", expect="$", timeout=2.0)
             self._in_com = False
-            log.info("COM logged out")
+            log.info("[COM] ✓ Logged out of COM successfully")
             return "Logged out of COM"
             
         except Exception as e:
-            log.error(f"COM logout error: {e}")
+            log.error(f"[COM] ✗ Logout failed: {type(e).__name__}: {e}")
             raise COMError(f"Logout failed: {e}") from e
     
     async def send_message(self, message: str) -> str:
         """发送消息"""
         if not self._in_com:
+            log.error("[COM] Cannot send: not in COM")
             raise COMError("Not in COM")
         
         try:
+            log.info(f"[COM] Sending message: {message[:50]}...")
             await self.ssh.send_and_read(message, wait=0.5)
-            log.info(f"Message sent: {message[:50]}...")
+            log.info(f"[COM] ✓ Message sent successfully")
             return f"Sent: {message}"
             
         except Exception as e:
-            log.error(f"Send message error: {e}")
+            log.error(f"[COM] ✗ Send failed: {type(e).__name__}: {e}")
             raise COMError(f"Send failed: {e}") from e
     
     async def read_messages(self, count: int = 10) -> list[str]:
         """读取消息"""
         if not self._in_com:
+            log.error("[COM] Cannot read: not in COM")
             raise COMError("Not in COM")
         
         try:
+            log.debug(f"[COM] Reading up to {count} messages...")
             _, messages = await self.ssh.send_and_read("", wait=0.5)
-            return messages[-count:] if messages else []
+            result = messages[-count:] if messages else []
+            log.debug(f"[COM] Read {len(result)} messages")
+            return result
             
         except Exception as e:
-            log.error(f"Read messages error: {e}")
+            log.error(f"[COM] ✗ Read failed: {type(e).__name__}: {e}")
             raise COMError(f"Read failed: {e}") from e
     
     async def start_monitor(self, callback: Callable[[list[str]], None], interval: float = 3.0) -> str:
@@ -802,6 +857,58 @@ class SDFShellChannel(BaseChannel):
         return self._ssh.connected and self._com.in_com
 
 
+# ============== 消息路由 ==============
+
+class MessageType(Enum):
+    """消息类型枚举"""
+    COM_CHAT = auto()      # com: 前缀 - 发送到COM聊天室
+    SSH_COMMAND = auto()   # sh: 前缀 - 执行SSH命令
+    NORMAL = auto()        # 无前缀 - 普通对话
+
+
+@dataclass
+class RoutedMessage:
+    """路由后的消息"""
+    type: MessageType
+    content: str
+    original: str
+
+
+def route_message(text: str) -> RoutedMessage:
+    """路由消息 - 根据前缀判断消息类型
+    
+    Rules / 规则:
+    - "com:" prefix → Send to COM chat room (auto-translate to English)
+      "com:" 前缀 → 发送到COM聊天室（自动翻译成英文）
+    - "sh:" prefix → Execute SSH/SDF command
+      "sh:" 前缀 → 执行SSH/SDF命令
+    - No prefix → Normal conversation
+      无前缀 → 普通对话
+    
+    Args:
+        text: Input text / 输入文本
+    
+    Returns:
+        RoutedMessage with type and content
+        包含类型和内容的路由消息
+    """
+    text = text.strip()
+    
+    if text.lower().startswith("com:"):
+        content = text[4:].strip()
+        log.debug(f"Route: COM_CHAT - {content[:50]}...")
+        return RoutedMessage(MessageType.COM_CHAT, content, text)
+    
+    elif text.lower().startswith("sh:"):
+        content = text[3:].strip()
+        log.debug(f"Route: SSH_COMMAND - {content[:50]}...")
+        return RoutedMessage(MessageType.SSH_COMMAND, content, text)
+    
+    else:
+        log.debug(f"Route: NORMAL - {text[:50]}...")
+        return RoutedMessage(MessageType.NORMAL, text, text)
+
+
 # ============== 全局实例 ==============
 
 _ssh_session: Optional[SSHSession] = None
@@ -897,59 +1004,159 @@ def ssh_disconnect() -> str:
         return f"Error: {e}"
 
 
+def ssh_exec(command: str) -> str:
+    """执行SSH命令 (sh: 前缀路由)
+    
+    Execute SSH/SDF command via sh: prefix routing
+    通过 sh: 前缀路由执行SSH/SDF命令
+    
+    Args:
+        command: SSH command to execute / 要执行的SSH命令
+    
+    Returns:
+        Command output / 命令输出
+    """
+    try:
+        ssh, com = _get_sessions()
+        loop = asyncio.new_event_loop()
+        
+        # If in COM, need to exit first / 如果在COM中，需要先退出
+        was_in_com = com.in_com
+        if was_in_com:
+            log.debug("Temporarily exiting COM for SSH command")
+            loop.run_until_complete(com.logout())
+        
+        result = loop.run_until_complete(ssh.send_command(command, expect="$", timeout=10.0))
+        
+        # Re-enter COM if was in COM / 如果之前在COM中，重新进入
+        if was_in_com:
+            log.debug("Re-entering COM after SSH command")
+            loop.run_until_complete(com.login())
+        
+        loop.close()
+        log.info(f"SSH command executed: {command[:50]}...")
+        return result
+    except Exception as e:
+        log.error(f"SSH command failed: {e}")
+        return f"Error: {e}"
+
+
+def process_message(text: str) -> str:
+    """处理消息 - 根据前缀路由到不同处理方式
+    
+    Process message with prefix routing
+    根据前缀路由处理消息
+    
+    This is the main entry point for nanobot to process user messages.
+    这是nanobot处理用户消息的主入口。
+    
+    Args:
+        text: User input text / 用户输入文本
+    
+    Returns:
+        Processing result / 处理结果
+    """
+    try:
+        routed = route_message(text)
+        
+        if routed.type == MessageType.COM_CHAT:
+            # Send to COM chat / 发送到COM聊天室
+            _, com = _get_sessions()
+            if not com.in_com:
+                return "Error: Not in COM. Use com_login first."
+            
+            loop = asyncio.new_event_loop()
+            result = loop.run_until_complete(com.send_message(routed.content))
+            loop.close()
+            return f"[COM] {result}"
+        
+        elif routed.type == MessageType.SSH_COMMAND:
+            # Execute SSH command / 执行SSH命令
+            return ssh_exec(routed.content)
+        
+        else:
+            # Normal conversation - return hint / 普通对话 - 返回提示
+            return (
+                "Normal message (no prefix). "
+                "Use 'com:' to send to COM chat, 'sh:' to execute SSH command."
+            )
+    
+    except Exception as e:
+        log.error(f"Process message error: {e}")
+        return f"Error: {e}"
+
+
 # ============== TOOLS定义 ==============
 
 TOOLS = [
     {
         "name": "ssh_connect",
-        "description": "连接SSH服务器",
+        "description": "连接SSH服务器 / Connect to SSH server",
         "parameters": {
             "type": "object",
             "properties": {
-                "host": {"type": "string", "description": "主机地址"},
-                "username": {"type": "string", "description": "用户名"},
-                "password": {"type": "string", "description": "密码"},
-                "port": {"type": "integer", "description": "端口", "default": 22}
+                "host": {"type": "string", "description": "主机地址 / Host address"},
+                "username": {"type": "string", "description": "用户名 / Username"},
+                "password": {"type": "string", "description": "密码 / Password"},
+                "port": {"type": "integer", "description": "端口 / Port", "default": 22}
             },
             "required": ["host", "username", "password"]
         }
     },
     {
         "name": "com_login",
-        "description": "登录COM聊天室",
+        "description": "登录COM聊天室 / Login to COM chat room",
         "parameters": {"type": "object", "properties": {}}
     },
     {
         "name": "com_send",
-        "description": "发送消息到COM",
+        "description": "发送消息到COM / Send message to COM",
         "parameters": {
             "type": "object",
-            "properties": {"message": {"type": "string", "description": "消息内容"}},
+            "properties": {"message": {"type": "string", "description": "消息内容 / Message content"}},
             "required": ["message"]
         }
     },
     {
         "name": "com_read",
-        "description": "读取COM消息",
+        "description": "读取COM消息 / Read COM messages",
         "parameters": {
             "type": "object",
-            "properties": {"count": {"type": "integer", "description": "数量", "default": 10}}
+            "properties": {"count": {"type": "integer", "description": "数量 / Count", "default": 10}}
         }
     },
     {
         "name": "com_logout",
-        "description": "退出COM",
+        "description": "退出COM / Logout from COM",
         "parameters": {"type": "object", "properties": {}}
     },
     {
         "name": "ssh_disconnect",
-        "description": "断开SSH连接",
+        "description": "断开SSH连接 / Disconnect SSH",
         "parameters": {"type": "object", "properties": {}}
+    },
+    {
+        "name": "ssh_exec",
+        "description": "执行SSH命令 (sh:前缀路由) / Execute SSH command (sh: prefix routing)",
+        "parameters": {
+            "type": "object",
+            "properties": {"command": {"type": "string", "description": "SSH命令 / SSH command"}},
+            "required": ["command"]
+        }
+    },
+    {
+        "name": "process_message",
+        "description": "处理消息 - 根据前缀路由 (com:/sh:) / Process message with prefix routing",
+        "parameters": {
+            "type": "object",
+            "properties": {"text": {"type": "string", "description": "用户输入 / User input"}},
+            "required": ["text"]
+        }
     }
 ]
 
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __all__ = [
     "SDFShellChannel",
     "SSHSession",
@@ -959,18 +1166,25 @@ __all__ = [
     "MemoryQueue",
     "RedisQueue",
     "SDFShellError",
+    "MessageType",
+    "RoutedMessage",
+    "route_message",
     "ssh_connect",
     "com_login",
     "com_send",
     "com_read",
     "com_logout",
     "ssh_disconnect",
+    "ssh_exec",
+    "process_message",
     "TOOLS",
+    "DEFAULT_LOG_FILE",
 ]
 
 
 if __name__ == "__main__":
-    print("SDFShell v2.0.0 - SDF.org COM Chat Channel for nanobot")
+    print(f"SDFShell v{__version__} - SDF.org COM Chat Channel for nanobot")
+    print(f"Log file: {DEFAULT_LOG_FILE}")
     print(f"paramiko-expect: {HAS_PARAMIKO_EXPECT}")
     print(f"pyte: {HAS_PYTE}")
     print(f"redis: {HAS_REDIS}")
