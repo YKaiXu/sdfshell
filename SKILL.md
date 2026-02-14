@@ -16,10 +16,24 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 
 **IMPORTANT**: SDFShell does NOT connect to nanobot via API. Instead:
 
-1. **Feishu Connection**: Handled directly by nanobot's built-in Feishu Channel via WebSocket
+1. **Chat Tool Connection**: Handled by nanobot's built-in Channels (Feishu, WeChat, Telegram, Discord, etc.)
 2. **SDFShell Connection**: Uses nanobot's message queue mechanism (`nanobot.bus.Queue`)
 3. **Message Flow**: External systems → Channel → Queue → Agent → Tools → Response
 
+### Multi-Platform Support
+
+SDFShell works with **ALL** nanobot-connected chat platforms:
+
+| Platform | Connection | SDFShell Support |
+|----------|------------|------------------|
+| Feishu (飞书) | Built-in WebSocket | ✅ Full support |
+| WeChat (微信) | Built-in Channel | ✅ Full support |
+| Telegram | Built-in Channel | ✅ Full support |
+| Discord | Built-in Channel | ✅ Full support |
+| Slack | Built-in Channel | ✅ Full support |
+| Any other | Custom Channel | ✅ Full support |
+
+**How it works:**
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        nanobot                               │
@@ -29,17 +43,25 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 │  │ (built-in)  │    │             │    │  (skill)    │     │
 │  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘     │
 │         │                  │                  │             │
-│         └──────────────────┼──────────────────┘             │
+│  ┌──────┴──────┐           │           ┌──────┴──────┐     │
+│  │   WeChat    │           │           │   Telegram  │     │
+│  │   Channel   │◄──────────┼──────────►│   Channel   │     │
+│  └─────────────┘           │           └─────────────┘     │
 │                            │                                │
 │                    ┌───────▼───────┐                        │
 │                    │ Message Queue │                        │
 │                    │ (nanobot.bus) │                        │
 │                    └───────────────┘                        │
 └─────────────────────────────────────────────────────────────┘
-         │                                    │
-         ▼                                    ▼
-    Feishu App                          SDF.org COM
+         │                    │                    │
+         ▼                    ▼                    ▼
+    Feishu App            WeChat              Telegram
 ```
+
+**Any user from any platform can:**
+- Send messages to SDF.org COM chat room
+- Receive COM messages (with auto-translation)
+- Execute SDF shell commands
 
 ## Message Routing Rules
 
@@ -201,19 +223,23 @@ user2: Yes, type 'help irc' in the shell
 
 ## Configuration
 
-Add to nanobot's `~/.nanobot/config.yaml`:
+Add to nanobot's `~/.nanobot/config.json`:
 
-```yaml
-channels:
-  sdfshell:
-    enabled: true
-    host: sdf.org
-    port: 22
-    username: your_username
-    password: your_password
-    monitor_interval: 3.0
-    queue_type: nanobot
-    reconnect_attempts: 3
+```json
+{
+  "channels": {
+    "sdfshell": {
+      "enabled": true,
+      "host": "sdf.org",
+      "port": 22,
+      "username": "your_username",
+      "password": "your_password",
+      "monitor_interval": 3.0,
+      "queue_type": "nanobot",
+      "reconnect_attempts": 3
+    }
+  }
+}
 ```
 
 ## Running Methods
@@ -224,14 +250,18 @@ SDFShell supports two running modes:
 
 SDFShell runs as a nanobot channel, integrated with nanobot's message processing:
 
-```yaml
-# Add to ~/.nanobot/config.yaml
-channels:
-  sdfshell:
-    enabled: true
-    host: sdf.org
-    username: your_username
-    password: your_password
+```json
+// Add to ~/.nanobot/config.json
+{
+  "channels": {
+    "sdfshell": {
+      "enabled": true,
+      "host": "sdf.org",
+      "username": "your_username",
+      "password": "your_password"
+    }
+  }
+}
 ```
 
 Then start nanobot normally - SDFShell will auto-start.
@@ -243,7 +273,7 @@ For standalone monitoring without nanobot:
 ```bash
 # Install service
 mkdir -p ~/.config/systemd/user
-cp ~/.nanobot/skills/sdfshell/sdfshell.service ~/.config/systemd/user/
+cp ~/.nanobot/workspace/skills/sdfshell/sdfshell.service ~/.config/systemd/user/
 
 # Enable and start
 systemctl --user enable sdfshell
