@@ -2,6 +2,15 @@
 
 SDF.org COM chat room nanobot channel for bidirectional message passing with auto-translation support.
 
+## What is COM?
+
+**COM = SDF.org Chat Room System (NOT serial port!)**
+
+- **COM** is the chat room system on SDF.org (Super Dimension Fortress)
+- It's a multi-user chat system accessible via SSH
+- Users can join different chat rooms like `#anonradio`, `#spacebar`, etc.
+- **NOT related to serial ports (COM1, COM2, etc.)**
+
 ## Core Technologies
 
 | Component | Technology | Function |
