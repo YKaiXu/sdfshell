@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SDFShell One-Click Installation Script
-# Auto-creates virtual environment and installs all dependencies
+# Auto-creates virtual environment, installs dependencies, and configures nanobot
 
 set -e
 
@@ -30,11 +30,12 @@ fi
 echo "✓ Python version: $PYTHON_VERSION"
 
 # Set installation directories
-# NOTE: nanobot loads skills from workspace/skills/, NOT from ~/.nanobot/skills/
+# IMPORTANT: nanobot loads skills from workspace/skills/, NOT from ~/.nanobot/skills/
 WORKSPACE_DIR="${HOME}/.nanobot/workspace"
 SKILL_DIR="${WORKSPACE_DIR}/skills/sdfshell"
 VENV_DIR="${SKILL_DIR}/venv"
 LOG_DIR="${HOME}/.nanobot/logs"
+CONFIG_FILE="${HOME}/.nanobot/config.json"
 
 # Create directories
 echo "Creating directories..."
@@ -120,9 +121,61 @@ else
     echo "✗ Virtual environment not found"
 fi
 
+# Update nanobot config
+echo ""
+echo "========================================"
+echo "Configuring nanobot"
+echo "========================================"
+
+if [ -f "$CONFIG_FILE" ]; then
+    echo "Updating config.json..."
+    
+    # Use Python to update JSON config
+    $PYTHON << 'PYEOF'
+import json
+import os
+
+config_file = os.path.expanduser("~/.nanobot/config.json")
+
+try:
+    with open(config_file, 'r') as f:
+        config = json.load(f)
+except:
+    config = {}
+
+# Ensure channels section exists
+if 'channels' not in config:
+    config['channels'] = {}
+
+# Add sdfshell channel config
+config['channels']['sdfshell'] = {
+    'enabled': True,
+    'host': 'sdf.org',
+    'port': 22,
+    'username': '',
+    'password': '',
+    'monitor_interval': 3.0,
+    'queue_type': 'nanobot',
+    'reconnect_attempts': 3
+}
+
+with open(config_file, 'w') as f:
+    json.dump(config, f, indent=2)
+
+print("✓ Config updated: sdfshell channel added")
+print(f"  Channels: {list(config['channels'].keys())}")
+PYEOF
+
+else
+    echo "⚠ Config file not found at $CONFIG_FILE"
+    echo "  Please configure manually after nanobot setup"
+fi
+
 # Restart nanobot gateway (no sudo required)
 echo ""
-echo "Restarting nanobot gateway..."
+echo "========================================"
+echo "Restarting nanobot gateway"
+echo "========================================"
 
 # Check if nanobot is installed
 NANOBOT_PATH="$HOME/.local/bin/nanobot"
