@@ -18,7 +18,7 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 **Copy this command and send to nanobot:**
 
 ```
-请在bash执行: curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | bash
+Execute in bash: curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | bash
 ```
 
 After execution, nanobot will:
