@@ -14,6 +14,22 @@ SDF.org COM聊天室的nanobot通道，实现双向消息传递。
 
 ## Message Routing Rules / 消息路由规则
 
+### Two Prefix Types / 两种前缀类型
+
+| Prefix 前缀 | Purpose 用途 | Description 说明 |
+|-------------|--------------|------------------|
+| `com:` | **Send Chat Message / 发送聊天消息** | Send message to COM chat room (auto-translate to English) 向COM聊天室发送消息（自动翻译为英文） |
+| `sh:` | **Execute Command / 执行操作指令** | Execute SSH/SDF command (no translation) 执行SSH/SDF命令（不翻译） |
+| No prefix 无前缀 | Normal conversation 普通对话 | Chat with nanobot, not sent to COM 与nanobot对话，不发送到COM |
+
+### Important Notes / 重要说明
+
+- **`com:` prefix**: Message content will be **auto-translated to English** before sending to COM chat room
+  **`com:`前缀**：消息内容会**自动翻译为英文**后发送到COM聊天室
+
+- **`sh:` prefix**: Command will be executed **without translation**, nanobot only translates natural language to correct command
+  **`sh:`前缀**：命令**不翻译直接执行**，nanobot只将自然语言翻译为正确的命令
+
 ### Sending Messages from Feishu / 从飞书发送消息
 
 nanobot needs to determine how to handle messages based on prefix:
@@ -37,6 +53,26 @@ Feishu Message 飞书消息 → Detect Prefix 检测前缀 →
   - "sh:" → Execute SSH Command 执行SSH命令 → Return Result 返回结果
   - No prefix 无前缀 → Normal Conversation 正常对话
 ```
+
+### Bidirectional Auto-Translation / 双向自动翻译
+
+**Feishu → COM (飞书 → COM)**:
+1. User sends message in any language 用户用任意语言发送消息
+2. nanobot detects `com:` prefix nanobot检测`com:`前缀
+3. LLM translates to English LLM翻译为英文
+4. Send to COM chat room 发送到COM聊天室
+
+**COM → Feishu (COM → 飞书)**:
+1. COM message arrives (any language) COM消息到达（任意语言）
+2. Message goes to queue 消息进入队列
+3. nanobot detects source language nanobot检测源语言
+4. LLM translates to user's chat tool language LLM翻译为用户聊天工具语言
+5. Send to Feishu 发送到飞书
+
+**Implementation Status / 实现状态**:
+- ✅ Message routing logic 消息路由逻辑
+- ✅ Queue mechanism 队列机制
+- ⚠️ Auto-translation requires nanobot LLM integration 自动翻译需要nanobot LLM集成
 
 ## Installation / 安装
 
