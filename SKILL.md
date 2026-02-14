@@ -109,13 +109,27 @@ nanobot需要知悉以下COM命令，以便正确操作：
 | `/q` | 退出COM | 返回Shell |
 | `/quit` | 退出COM | 同/q |
 
+### 频道命令
+
+| 命令 | 功能 | 示例 |
+|------|------|------|
+| `/j channel` | 加入/切换频道 | `/j general` |
+| `/join channel` | 加入/切换频道 | `/join help` |
+| `/l` | 离开当前频道 | 返回默认频道 |
+| `/leave` | 离开当前频道 | 同/l |
+| `/channels` | 列出所有频道 | 显示可用频道 |
+| `/chans` | 列出所有频道 | 同/channels |
+
 ### 用户管理命令
 
 | 命令 | 功能 | 示例 |
 |------|------|------|
 | `/w` | 查看在线用户 | 显示所有在线用户 |
+| `/who` | 查看在线用户 | 同/w |
 | `/i username` | 忽略用户 | `/i spammer` |
-| `/u` | 取消忽略 | `/u spammer` |
+| `/ignore username` | 忽略用户 | 同/i |
+| `/u username` | 取消忽略 | `/u spammer` |
+| `/unignore username` | 取消忽略 | 同/u |
 
 ### 消息命令
 
@@ -144,6 +158,10 @@ nanobot需要知悉以下COM命令，以便正确操作：
 | 发送消息 | `com_send` | `com_send("Hello")` |
 | 读取消息 | `com_read` | `com_read(10)` |
 | 查看用户 | `com_send` | `com_send("/w")` |
+| 切换频道 | `com_send` | `com_send("/j general")` |
+| 列出频道 | `com_send` | `com_send("/channels")` |
+| 私聊用户 | `com_send` | `com_send("/m john Hello")` |
+| 忽略用户 | `com_send` | `com_send("/i spammer")` |
 | 退出聊天 | `com_logout` | `com_logout()` |
 | 断开连接 | `ssh_disconnect` | `ssh_disconnect()` |
 
