@@ -12,6 +12,22 @@ SDF.org COM聊天室的nanobot通道，支持双向消息传递和自动翻译�
 - **nanobot Queue** - 可靠的消息传递机制
 - **自动重连** - SSH断开后自动重连
 - **双向翻译** - 消息自动翻译
+- **多平台支持** - 支持飞书、微信、Telegram、Discord、Slack等
+
+## 多平台支持
+
+SDFShell 支持**所有** nanobot 连接的聊天平台：
+
+| 平台 | 支持 | 平台 | 支持 |
+|------|------|------|------|
+| 飞书 | ✅ | 微信 | ✅ |
+| Telegram | ✅ | Discord | ✅ |
+| Slack | ✅ | 其他平台 | ✅ |
+
+**任何平台的用户都可以：**
+- 发送消息到 SDF.org COM 聊天室
+- 接收 COM 消息（自动翻译）
+- 执行 SDF shell 命令
 
 ## 一键安装
 
@@ -44,19 +60,23 @@ curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | b
 
 ## 配置
 
-添加到 `~/.nanobot/config.yaml`：
+添加到 `~/.nanobot/config.json`：
 
-```yaml
-channels:
-  sdfshell:
-    enabled: true
-    host: sdf.org
-    port: 22
-    username: your_username
-    password: your_password
-    monitor_interval: 3.0
-    queue_type: nanobot
-    reconnect_attempts: 3
+```json
+{
+  "channels": {
+    "sdfshell": {
+      "enabled": true,
+      "host": "sdf.org",
+      "port": 22,
+      "username": "your_username",
+      "password": "your_password",
+      "monitor_interval": 3.0,
+      "queue_type": "nanobot",
+      "reconnect_attempts": 3
+    }
+  }
+}
 ```
 
 ## COM命令
