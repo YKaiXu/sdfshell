@@ -37,7 +37,7 @@ SDF.org COM chat room nanobot channel for bidirectional message passing with aut
 
 ```bash
 # Run this command to set your SDF credentials
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 -c "
 from sdfshell import set_config
 set_config(username='YOUR_USERNAME', password='YOUR_PASSWORD')
 "
@@ -47,7 +47,7 @@ set_config(username='YOUR_USERNAME', password='YOUR_PASSWORD')
 
 ```bash
 # Connect to SDF.org
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 -c "
 from sdfshell import ssh_connect, com_login
 ssh_connect(host='sdf.org', username='YOUR_USERNAME', password='YOUR_PASSWORD')
 com_login()
@@ -58,7 +58,7 @@ com_login()
 
 ```bash
 # Send message to current COM room
-cd ~/.nanobot/skills/sdfshell && . venv/bin/activate && python3 -c "
+cd ~/.nanobot/workspace/skills/sdfshell && . venv/bin/activate && python3 -c "
 from sdfshell import com_send
 com_send(message='Hello everyone!')
 "
@@ -377,8 +377,8 @@ Or manually install:
 curl -fsSL https://raw.githubusercontent.com/YKaiXu/sdfshell/main/install.sh | bash
 
 # Or clone manually
-git clone https://github.com/YKaiXu/sdfshell.git ~/.nanobot/skills/sdfshell
-cd ~/.nanobot/skills/sdfshell
+git clone https://github.com/YKaiXu/sdfshell.git ~/.nanobot/workspace/skills/sdfshell
+cd ~/.nanobot/workspace/skills/sdfshell
 python3 -m venv venv
 source venv/bin/activate
 pip install paramiko paramiko-expect pyte
@@ -442,7 +442,7 @@ Ask me anything about SDF.org!
 | "What's my SDF config?" | Call `get_config_status()` |
 | "Connect to SDF" | Check config, then call `ssh_connect()` |
 
-**Configuration is saved to:** `~/.nanobot/skills/sdfshell/config.json`
+**Configuration is saved to:** `~/.nanobot/workspace/skills/sdfshell/config.json`
 
 ### Message Processing Logic
 
