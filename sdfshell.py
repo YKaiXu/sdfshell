@@ -1237,9 +1237,23 @@ def _get_sessions() -> tuple[SSHSession, COMSession]:
 
 # ============== nanobot工具函数 ==============
 
-def ssh_connect(host: str, username: str, password: str, port: int = 22) -> str:
-    """连接SSH服务器"""
+def ssh_connect(host: str = None, username: str = None, password: str = None, port: int = 22) -> str:
+    """连接SSH服务器
+    
+    如果参数未提供，从配置文件读取
+    """
     try:
+        # 如果参数未提供，从配置文件读取
+        if not host or not username or not password:
+            config = load_config()
+            host = host or config.get("host", "sdf.org")
+            username = username or config.get("username")
+            password = password or config.get("password")
+            port = config.get("port", 22)
+        
+        if not username or not password:
+            return "Error: No credentials configured. Run set_config() first."
+        
         ssh, _ = _get_sessions()
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
